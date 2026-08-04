@@ -91,6 +91,13 @@ TEXTS_UZ = {
         "O'rtacha javob vaqti — <b>1–2 ish kuni</b>."
     ),
 
+    # ── Защита от дублей ──────────────────────────────────────────────────
+    "anketa_block_pending":  "⏳ <b>Arizangiz allaqachon ko'rib chiqilmoqda.</b>\n\nHR menejer javobini kuting — qayta topshirish hozircha mumkin emas.",
+    "anketa_block_accepted": "✅ <b>Siz allaqachon suhbatga taklif etilgansiz!</b>\n\nSizni belgilangan vaqtda kutamiz.",
+    "anketa_block_hired":    "🏆 <b>Siz allaqachon MADO xodimisiz!</b>",
+    "anketa_block_hold":     "⏸ <b>Anketangiz zaxiraga qoldirildi.</b>\n\nHR menejer keyinroq unga qaytadi. Qayta topshirish hozircha mumkin emas.",
+    "anketa_already_exists": "⏳ <b>Sizda allaqachon faol ariza bor.</b>\n\nQayta yuborish mumkin emas.",
+
     # ── Статус заявки ─────────────────────────────────────────────────────
     "status_none":     "📋 Sizning faol arizangiz yo'q.",
     "status_pending":  "⏳ Arizangiz ko'rib chiqilmoqda. Javobni kuting.",
@@ -135,6 +142,16 @@ TEXTS_UZ = {
         "😔 <b>Afsuski, hozirda sizni suhbatga taklif eta olmaymiz.</b>\n\n"
         "Anketangiz zaxiramizda saqlanib qoladi. Keyinroq qayta urinib ko'rishingiz mumkin.\n"
         "MADO brendiga qiziqish bildirganingiz uchun rahmat!"
+    ),
+    "candidate_hired_notice": (
+        "🏆 <b>Tabriklaymiz! Siz MADO'ga ishga qabul qilindingiz!</b>\n\n"
+        "Jamoamizga xush kelibsiz! 🎉\n\n"
+        "HR menejer tez orada siz bilan bog'lanadi."
+    ),
+    "candidate_hold_notice": (
+        "⏸ <b>Anketangiz zaxiraga qoldirildi.</b>\n\n"
+        "HR menejer keyinroq arizangizga qaytadi.\n"
+        "Sabringiz uchun rahmat!"
     ),
     "hr_status_accepted":  "🟢 <b>STATUS:</b> Tasdiqlandi. Suhbat: <code>{interview_text}</code>",
     "hr_status_rejected":  "🔴 <b>STATUS:</b> Rad etildi. Foydalanuvchi bloklandi.",
