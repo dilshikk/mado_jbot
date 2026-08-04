@@ -12,6 +12,10 @@ BASE_DIR   = Path(__file__).parent
 PHOTOS_DIR = BASE_DIR / "photos"
 PHOTOS_DIR.mkdir(exist_ok=True)
 
+# Папка для логов создаётся автоматически
+LOGS_DIR = BASE_DIR / "logs"
+LOGS_DIR.mkdir(exist_ok=True)
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -72,7 +76,7 @@ def load_config() -> Config:
             "https://docs.google.com/spreadsheets/d/1rxds0GNVRZPF-D0RFfkdp0ZY4zEgl8TJjIyZ0Apl6rk/edit",
         ),
         required_channel  = os.getenv("REQUIRED_CHANNEL", ""),
-        log_path          = os.getenv("LOG_PATH", str(BASE_DIR / "bot.log")),
+        log_path          = os.getenv("LOG_PATH", str(LOGS_DIR / "bot.log")),
     )
 
 
