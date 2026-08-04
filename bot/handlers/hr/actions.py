@@ -83,11 +83,7 @@ async def hr_hire_callback(callback: CallbackQuery, session: AsyncSession) -> No
 
     await db.update_application_status(session, candidate_id, "hired")
     candidate_lang = await db.get_user_lang(session, candidate_id) or "ru"
-    notice = (
-        "🏆 <b>Поздравляем! Вы приняты на работу в MADO!</b>\n\nДобро пожаловать в нашу команду! 🎉\n\nHR-менеджер свяжется с вами в ближайшее время."
-        if candidate_lang == "ru" else
-        "🏆 <b>Tabriklaymiz! Siz MADO'ga ishga qabul qilindingiz!</b>\n\nJamoamizga xush kelibsiz! 🎉\n\nHR menejer tez orada siz bilan bog'lanadi."
-    )
+    notice = LOCALIZATION[candidate_lang]["candidate_hired_notice"]
     with suppress(TelegramAPIError):
         await bot.send_message(chat_id=candidate_id, text=notice, parse_mode="HTML")
     with suppress(TelegramAPIError):
@@ -129,9 +125,20 @@ async def hr_reject_callback(callback: CallbackQuery, session: AsyncSession) -> 
 @router.callback_query(F.data.startswith("hr_hold:"))
 async def hr_hold_callback(callback: CallbackQuery, session: AsyncSession) -> None:
     candidate_id = int(callback.data.split(":")[1])
+    bot: Bot     = callback.bot
     await db.update_application_status(session, candidate_id, "hold")
+
+    # Уведомляем кандидата о переносе анкеты на паузу
+    candidate_lang = await db.get_user_lang(session, candidate_id) or "ru"
     with suppress(TelegramAPIError):
-        await callback.bot.edit_message_text(
+        await bot.send_message(
+            chat_id=candidate_id,
+            text=LOCALIZATION[candidate_lang]["candidate_hold_notice"],
+            parse_mode="HTML",
+        )
+
+    with suppress(TelegramAPIError):
+        await bot.edit_message_text(
             chat_id=callback.message.chat.id, message_id=callback.message.message_id,
             text=f"{callback.message.text}\n\n{LOCALIZATION['ru']['hr_status_hold']}",
             parse_mode="HTML", reply_markup=kb.get_hr_hold_keyboard(candidate_id),

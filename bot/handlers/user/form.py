@@ -6,6 +6,7 @@ import re
 from datetime import datetime
 
 from aiogram import Bot, F, Router
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +30,17 @@ VALID_BRANCH          = "Tashkent City Mall"
 EXPERIENCE_OPTIONS_RU = {"Нет опыта", "Менее 1 года", "1–2 года", "3–5 лет", "5+ лет"}
 EXPERIENCE_OPTIONS_UZ = {"Tajriba yo'q", "1 yildan kam", "1–2 yil", "3–5 yil", "5+ yil"}
 
+# Статусы, при которых повторная подача анкеты запрещена (защита от дублей)
+BLOCKING_STATUSES = {"pending", "accepted", "hired", "hold"}
+
+# Все активные шаги анкеты (waiting_for_lang исключён — там своя логика)
+_FORM_ACTIVE_STATES = (
+    Form.waiting_branch, Form.waiting_position, Form.waiting_name,
+    Form.waiting_birthday, Form.waiting_gender, Form.waiting_family,
+    Form.waiting_citizenship, Form.waiting_address, Form.waiting_experience,
+    Form.waiting_phone, Form.waiting_video, Form.waiting_confirmation,
+)
+
 
 def _valid_position_labels(vacancies: list[dict]) -> set[str]:
     labels: set[str] = set()
@@ -42,19 +54,10 @@ def _valid_position_labels(vacancies: list[dict]) -> set[str]:
     return labels
 
 
-@router.message(IsCancelMessage(), Form.waiting_branch)
-@router.message(IsCancelMessage(), Form.waiting_position)
-@router.message(IsCancelMessage(), Form.waiting_name)
-@router.message(IsCancelMessage(), Form.waiting_birthday)
-@router.message(IsCancelMessage(), Form.waiting_gender)
-@router.message(IsCancelMessage(), Form.waiting_family)
-@router.message(IsCancelMessage(), Form.waiting_citizenship)
-@router.message(IsCancelMessage(), Form.waiting_address)
-@router.message(IsCancelMessage(), Form.waiting_experience)
-@router.message(IsCancelMessage(), Form.waiting_phone)
-@router.message(IsCancelMessage(), Form.waiting_video)
-@router.message(IsCancelMessage(), Form.waiting_confirmation)
+@router.message(StateFilter(*_FORM_ACTIVE_STATES), IsCancelMessage())
+@router.message(StateFilter(*_FORM_ACTIVE_STATES), Command("cancel"))
 async def cancel_form(message: Message, state: FSMContext, lang: str) -> None:
+    """Отмена анкеты на любом шаге — кнопкой или командой /cancel."""
     await state.clear()
     await state.update_data(lang=lang)
     await message.answer(LOCALIZATION[lang]["anketa_cancelled"], reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
@@ -76,15 +79,12 @@ async def start_anketa(message: Message, state: FSMContext, lang: str, session: 
         )
         return
 
+    # Защита от дублей: активная заявка любого типа блокирует новую подачу
     status = await db.get_application_status(session, message.from_user.id)
-    if status == "hired":
-        await message.answer("🏆 <b>Вы уже являетесь сотрудником MADO!</b>" if lang == "ru" else "🏆 <b>Siz allaqachon MADO xodimisiniz!</b>", parse_mode="HTML")
-        return
-    if status == "accepted":
-        await message.answer("✅ <b>Вы уже приглашены на собеседование!</b>" if lang == "ru" else "✅ <b>Siz allaqachon suhbatga taklif etilgansiz!</b>", parse_mode="HTML")
-        return
-    if status == "pending":
-        await message.answer("⏳ <b>Ваша анкета уже на рассмотрении.</b>" if lang == "ru" else "⏳ <b>Arizangiz allaqachon ko'rib chiqilmoqda.</b>", parse_mode="HTML")
+    if status in BLOCKING_STATUSES:
+        key = f"anketa_block_{status}"
+        text = LOCALIZATION[lang].get(key) or LOCALIZATION[lang]["anketa_block_pending"]
+        await message.answer(text, parse_mode="HTML")
         return
 
     await message.answer(LOCALIZATION[lang]["ask_branch"], reply_markup=kb.get_branch_keyboard(lang), parse_mode="HTML")
@@ -94,6 +94,7 @@ async def start_anketa(message: Message, state: FSMContext, lang: str, session: 
 @router.message(Form.waiting_branch)
 async def process_branch(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
     if VALID_BRANCH not in (message.text or ""):
+        await message.answer(LOCALIZATION[lang]["ask_branch"], reply_markup=kb.get_branch_keyboard(lang), parse_mode="HTML")
         return
     await state.update_data(branch=message.text)
     vacancies = await db.get_active_vacancies(session)
@@ -159,6 +160,7 @@ async def process_birthday(message: Message, state: FSMContext, lang: str) -> No
 @router.message(Form.waiting_gender)
 async def process_gender(message: Message, state: FSMContext, lang: str) -> None:
     if message.text not in {LOCALIZATION[lang]["gender_male"], LOCALIZATION[lang]["gender_female"]}:
+        await message.answer(LOCALIZATION[lang]["ask_gender"], reply_markup=kb.get_gender_keyboard(lang), parse_mode="HTML")
         return
     await state.update_data(gender=message.text)
     await message.answer(LOCALIZATION[lang]["ask_family"], reply_markup=kb.get_family_keyboard(lang), parse_mode="HTML")
@@ -168,6 +170,7 @@ async def process_gender(message: Message, state: FSMContext, lang: str) -> None
 @router.message(Form.waiting_family)
 async def process_family(message: Message, state: FSMContext, lang: str) -> None:
     if message.text not in {LOCALIZATION[lang]["family_single"], LOCALIZATION[lang]["family_married"]}:
+        await message.answer(LOCALIZATION[lang]["ask_family"], reply_markup=kb.get_family_keyboard(lang), parse_mode="HTML")
         return
     await state.update_data(family=message.text)
     await message.answer(LOCALIZATION[lang]["ask_citizenship"], reply_markup=kb.get_citizenship_keyboard(lang), parse_mode="HTML")
@@ -177,6 +180,7 @@ async def process_family(message: Message, state: FSMContext, lang: str) -> None
 @router.message(Form.waiting_citizenship)
 async def process_citizenship(message: Message, state: FSMContext, lang: str) -> None:
     if not (message.text or "").strip():
+        await message.answer(LOCALIZATION[lang]["ask_citizenship"], reply_markup=kb.get_citizenship_keyboard(lang), parse_mode="HTML")
         return
     await state.update_data(citizenship=message.text)
     await message.answer(LOCALIZATION[lang]["ask_address"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
@@ -186,6 +190,7 @@ async def process_citizenship(message: Message, state: FSMContext, lang: str) ->
 @router.message(Form.waiting_address)
 async def process_address(message: Message, state: FSMContext, lang: str) -> None:
     if len((message.text or "").strip()) < 4:
+        await message.answer(LOCALIZATION[lang]["ask_address"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
         return
     await state.update_data(address=message.text)
     await message.answer(
@@ -198,6 +203,10 @@ async def process_address(message: Message, state: FSMContext, lang: str) -> Non
 @router.message(Form.waiting_experience)
 async def process_experience(message: Message, state: FSMContext, lang: str) -> None:
     if (message.text or "").strip() not in (EXPERIENCE_OPTIONS_RU | EXPERIENCE_OPTIONS_UZ):
+        await message.answer(
+            "Есть ли у вас опыт работы в ресторанном бизнесе?" if lang == "ru" else "Restoran biznesida ish tajribangiz bormi?",
+            reply_markup=kb.get_experience_keyboard(lang), parse_mode="HTML",
+        )
         return
     await state.update_data(experience=message.text)
     await message.answer(LOCALIZATION[lang]["ask_phone"], reply_markup=kb.get_phone_keyboard(lang), parse_mode="HTML")
@@ -263,8 +272,18 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
     if message.text not in {LOCALIZATION["ru"]["confirm_btn_yes"], LOCALIZATION["uz"]["confirm_btn_yes"]}:
         return
 
+    user = message.from_user
+
+    # Финальная защита от дублей: между заполнением и подтверждением
+    # заявка могла уже появиться (например, HR вернул статус)
+    status = await db.get_application_status(session, user.id)
+    if status in BLOCKING_STATUSES:
+        await message.answer(LOCALIZATION[lang]["anketa_already_exists"], reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
+        await state.clear()
+        await state.update_data(lang=lang)
+        return
+
     now_str      = datetime.now().strftime("%d.%m.%Y %H:%M")
-    user         = message.from_user
     username_raw = user.username or LOCALIZATION["ru"]["none_text"]
     bot: Bot     = message.bot
 

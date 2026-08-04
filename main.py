@@ -70,13 +70,19 @@ async def main() -> None:
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
-        scheduler.shutdown(wait=False)
+        # Graceful shutdown: новые задачи не запускаются,
+        # выполняющиеся дожидаются завершения
+        with suppress(Exception):
+            scheduler.pause()
+        with suppress(Exception):
+            scheduler.shutdown(wait=True)
         with suppress(Exception):
             await storage.close()
         with suppress(Exception):
             await engine.dispose()
         with suppress(Exception):
             await bot.session.close()
+        logger.info("Бот корректно остановлен.")
 
 
 if __name__ == "__main__":
