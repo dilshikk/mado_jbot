@@ -6,4 +6,5 @@ python-dotenv==1.2.2
 aiogram-sqlite-storage
 sqlalchemy[asyncio]>=2.0
 aiosqlite>=0.20
+asyncpg>=0.30
 pydantic-settings>=2.4

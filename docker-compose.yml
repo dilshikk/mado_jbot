@@ -1,0 +1,36 @@
+name: mado_jbot
+
+services:
+  bot:
+    build: .
+    container_name: mado_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://mado:mado_password@postgres:5432/mado_db
+    volumes:
+      - ./logs:/app/logs
+      - ./credentials.json:/app/credentials.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: mado_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mado
+      POSTGRES_PASSWORD: mado_password
+      POSTGRES_DB: mado_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mado -d mado_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
