@@ -1,5 +1,6 @@
 # config.py
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +44,22 @@ def _parse_admin_ids() -> tuple[int, ...]:
     return tuple(ids)
 
 
+def _parse_log_level() -> int:
+    """
+    Читает LOG_LEVEL из .env и возвращает числовой уровень logging.
+    Допустимые значения: DEBUG, INFO, WARNING, ERROR, CRITICAL.
+    По умолчанию — WARNING для production (меньше шума в логах).
+    """
+    raw   = os.getenv("LOG_LEVEL", "WARNING").upper().strip()
+    level = logging.getLevelName(raw)
+    if not isinstance(level, int):
+        raise EnvironmentError(
+            f"Неверное значение LOG_LEVEL='{raw}'. "
+            f"Допустимые: DEBUG, INFO, WARNING, ERROR, CRITICAL."
+        )
+    return level
+
+
 # ── Config dataclass ──────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -55,7 +72,8 @@ class Config:
     fsm_storage_path:   str
     sheet_url:          str
     required_channel:   str
-    log_path:           str           # путь к лог-файлу
+    log_path:           str   # путь к лог-файлу
+    log_level:          int   # уровень логирования (logging.DEBUG / INFO / WARNING / ...)
 
 
 def load_config() -> Config:
@@ -77,6 +95,7 @@ def load_config() -> Config:
         ),
         required_channel  = os.getenv("REQUIRED_CHANNEL", ""),
         log_path          = os.getenv("LOG_PATH", str(LOGS_DIR / "bot.log")),
+        log_level         = _parse_log_level(),
     )
 
 
@@ -93,3 +112,4 @@ FSM_STORAGE_PATH  = config.fsm_storage_path
 SHEET_URL         = config.sheet_url
 REQUIRED_CHANNEL  = config.required_channel
 LOG_PATH          = config.log_path
+LOG_LEVEL         = config.log_level
