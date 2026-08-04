@@ -16,7 +16,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from aiogram_sqlite_storage.sqlitestore import SQLStorage
 
-from config import BOT_TOKEN, ADMIN_CHAT_ID
+from config import BOT_TOKEN, ADMIN_CHAT_ID, LOG_PATH
 from handlers import admin_broadcast, form, hr, hr_dashboard, user, subscription
 from messages import LOCALIZATION
 from middlewares.lang import LangMiddleware
@@ -29,8 +29,8 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
-        logging.StreamHandler(),                          # stdout → journald
-        logging.FileHandler("/www/wwwroot/mado_jbot/bot.log"),        # файл
+        logging.StreamHandler(),             # stdout → journald
+        logging.FileHandler(LOG_PATH),       # путь из .env (LOG_PATH)
     ],
 )
 logger = logging.getLogger(__name__)
