@@ -16,7 +16,7 @@ router = Router()
 async def handle_check_subscription(
     callback: CallbackQuery,
     session: AsyncSession,
-    lang: str = None,
+    lang: str | None = None,
 ) -> None:
     if not lang:
         lang = await db.get_user_lang(session, callback.from_user.id) or "ru"

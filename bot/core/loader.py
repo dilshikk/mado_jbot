@@ -1,6 +1,10 @@
 # bot/core/loader.py
 
+import asyncio
+from contextlib import suppress
+
 from aiogram import Bot, Dispatcher, F
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import StateFilter
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram_sqlite_storage.sqlitestore import SQLStorage
@@ -65,9 +69,6 @@ async def handle_group_messages(message: Message) -> None:
     """Отвечает на /start в группах — редирект в личку."""
     if not (message.text and message.text.startswith("/start")):
         return
-    from contextlib import suppress
-    from aiogram.exceptions import TelegramAPIError
-    import asyncio
 
     with suppress(TelegramAPIError):
         bot_info = await message.bot.get_me()
@@ -87,10 +88,6 @@ async def handle_group_messages(message: Message) -> None:
 
 
 async def _delete_after(message: Message, delay: int) -> None:
-    import asyncio
-    from contextlib import suppress
-    from aiogram.exceptions import TelegramAPIError
-
     await asyncio.sleep(delay)
     with suppress(TelegramAPIError):
         await message.delete()

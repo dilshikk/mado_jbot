@@ -16,7 +16,9 @@ class Base(DeclarativeBase):
     pass
 
 
-engine       = create_async_engine(settings.database_url)
+# pool_pre_ping — проверяет соединение перед использованием,
+# защищает от ошибок при разрывах соединения с Postgres
+engine       = create_async_engine(settings.database_url, pool_pre_ping=True)
 session_pool = async_sessionmaker(engine, expire_on_commit=False)
 
 

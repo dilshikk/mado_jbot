@@ -2,9 +2,8 @@
 
 import logging
 from contextlib import suppress
-from typing import Any
 
-from aiogram import Router
+from aiogram import Bot, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import ErrorEvent
 
@@ -15,16 +14,13 @@ logger = logging.getLogger(__name__)
 
 
 @router.error()
-async def error_handler(event: ErrorEvent, data: dict[str, Any]) -> None:
+async def error_handler(event: ErrorEvent, bot: Bot) -> None:
     """Глобальный обработчик необработанных ошибок."""
     logger.exception(
         "Необработанная ошибка при обработке update_id=%s: %s",
         event.update.update_id, event.exception,
         exc_info=event.exception,
     )
-    bot = data.get("bot")
-    if not bot:
-        return
     with suppress(TelegramAPIError):
         await bot.send_message(
             chat_id=ADMIN_CHAT_ID,

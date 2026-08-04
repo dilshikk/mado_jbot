@@ -14,6 +14,17 @@ logger = logging.getLogger(__name__)
 _NOTIFY_DELAY = 0.05
 
 
+def _format_interview_time(interview_time: str, lang: str) -> str:
+    """Форматирует дату собеседования под язык пользователя."""
+    try:
+        dt = datetime.strptime(interview_time, "%Y-%m-%d %H:%M")
+    except ValueError:
+        return interview_time
+    if lang == "ru":
+        return dt.strftime("%d.%m.%Y в %H:%M")
+    return dt.strftime("%d.%m.%Y, %H:%M")
+
+
 async def send_interview_reminders(bot: Bot) -> None:
     async with session_pool() as session:
         pending = await db.get_pending_reminders(session)
@@ -22,17 +33,12 @@ async def send_interview_reminders(bot: Bot) -> None:
     logger.info("send_interview_reminders: найдено %d напоминаний", len(pending))
 
     for row in pending:
-        lang           = row.get("lang") or "ru"
-        interview_time = row["interview_time"]
-        try:
-            dt       = datetime.strptime(interview_time, "%Y-%m-%d %H:%M")
-            time_str = dt.strftime("%d.%m.%Y в %H:%M")
-        except ValueError:
-            time_str = interview_time
+        lang     = row.get("lang") or "ru"
+        time_str = _format_interview_time(row["interview_time"], lang)
         text = (
             f"⏰ <b>Напоминание!</b>\n\nСегодня <b>{time_str}</b> вас ждут на собеседовании в <b>MADO</b>.\n\nПожалуйста, не опаздывайте! 🙌"
             if lang == "ru" else
-            f"⏰ <b>Eslatma!</b>\n\nBugun soat <b>{time_str}</b> da <b>MADO</b> suhbat.\n\nIltimos, kech qolmang! 🙌"
+            f"⏰ <b>Eslatma!</b>\n\nBugun <b>{time_str}</b> da <b>MADO</b> restoranida suhbat.\n\nIltimos, kech qolmang! 🙌"
         )
         try:
             await bot.send_message(chat_id=row["user_id"], text=text, parse_mode="HTML")
