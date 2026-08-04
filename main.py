@@ -20,6 +20,7 @@ from config import BOT_TOKEN, ADMIN_CHAT_ID, LOG_PATH
 from handlers import admin_broadcast, form, hr, hr_dashboard, user, subscription
 from messages import LOCALIZATION
 from middlewares.lang import LangMiddleware
+from middlewares.rate_limit import RateLimitMiddleware
 from middlewares.subscription import SubscriptionMiddleware
 from scheduler import auto_unblock_users, notify_stale_applications, send_interview_reminders
 import database as db
@@ -67,6 +68,10 @@ async def handle_group_messages(message: Message) -> None:
 
 def create_dispatcher(storage: SQLStorage) -> Dispatcher:
     dp = Dispatcher(storage=storage)
+
+    # Rate limiting — первым, чтобы отсекать спам до остальной логики
+    dp.message.outer_middleware(RateLimitMiddleware())
+    dp.callback_query.outer_middleware(RateLimitMiddleware())
 
     dp.message.middleware(LangMiddleware())
     dp.message.outer_middleware(SubscriptionMiddleware())
