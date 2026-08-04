@@ -16,7 +16,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from aiogram_sqlite_storage.sqlitestore import SQLStorage
 
-from config import BOT_TOKEN, ADMIN_CHAT_ID, LOG_PATH
+from config import BOT_TOKEN, ADMIN_CHAT_ID, LOG_PATH, LOG_LEVEL
 from handlers import admin_broadcast, form, hr, hr_dashboard, user, subscription
 from messages import LOCALIZATION
 from middlewares.lang import LangMiddleware
@@ -26,7 +26,7 @@ from scheduler import auto_unblock_users, notify_stale_applications, send_interv
 import database as db
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=LOG_LEVEL,
     format="%(asctime)s | %(levelname)s | %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
@@ -34,7 +34,19 @@ logging.basicConfig(
         logging.FileHandler(LOG_PATH),       # путь из .env (LOG_PATH)
     ],
 )
+
+# Подавляем слишком подробные логи сторонних библиотек
+# на уровнях выше DEBUG, чтобы не засорять файл в production
+if LOG_LEVEL > logging.DEBUG:
+    logging.getLogger("aiogram").setLevel(logging.WARNING)
+    logging.getLogger("apscheduler").setLevel(logging.WARNING)
+    logging.getLogger("gspread").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
+logger.info("Логирование запущено: уровень=%s, файл=%s", logging.getLevelName(LOG_LEVEL), LOG_PATH)
 
 BASE_DIR = Path(__file__).parent
 FSM_STORAGE_PATH = str(BASE_DIR / "fsm_storage.db")
