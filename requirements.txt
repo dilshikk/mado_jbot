@@ -6,5 +6,5 @@ python-dotenv==1.2.2
 aiogram-sqlite-storage
 sqlalchemy[asyncio]>=2.0
 aiosqlite>=0.20
-asyncpg>=0.30
 pydantic-settings>=2.4
+# asyncpg>=0.30  # нужен только для Postgres (см. DATABASE_URL в .env.example)
