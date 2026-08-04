@@ -11,7 +11,7 @@ from aiogram.types import Message
 
 import database as db
 import keyboards as kb
-from config import ADMIN_CHAT_ID
+from config import ADMIN_CHAT_ID, ADMIN_IDS
 from filters.common import IsCancelMessage, IsPrivateChat
 from gsheets import append_to_sheet
 from messages import LOCALIZATION
@@ -434,6 +434,7 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str) -
         except Exception as e:
             logger.error("Ошибка отправки видео HR: %s", e, exc_info=True)
 
+    # ── Запись в Google Sheets с уведомлением при ошибке ──────────────────────
     row_data = [
         now_str,
         data.get("branch"),      data.get("position"),   data.get("name"),
@@ -442,9 +443,32 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str) -
         data.get("phone"),
     ]
     try:
-        await asyncio.to_thread(append_to_sheet, row_data)
+        success = await asyncio.to_thread(append_to_sheet, row_data)
+        if not success:
+            raise RuntimeError("append_to_sheet вернул False")
     except Exception as e:
         logger.error("Ошибка Google Sheets: %s", e, exc_info=True)
+        # Уведомляем всех администраторов о сбое
+        error_text = (
+            f"⚠️ <b>Google Sheets: ошибка записи!</b>\n\n"
+            f"👤 Кандидат: <b>{data.get('name')}</b>\n"
+            f"📱 Телефон: <code>{data.get('phone')}</code>\n"
+            f"💼 Вакансия: {data.get('position')}\n\n"
+            f"<i>Данные сохранены в БД, но не попали в таблицу.\n"
+            f"Проверьте credentials.json и доступ к Google Sheets.</i>\n\n"
+            f"🔴 Ошибка: <code>{e}</code>"
+        )
+        for admin_id in ADMIN_IDS:
+            try:
+                await bot.send_message(
+                    chat_id=admin_id,
+                    text=error_text,
+                    parse_mode="HTML",
+                )
+            except Exception as notify_err:
+                logger.error(
+                    "Не удалось уведомить admin_id=%d: %s", admin_id, notify_err
+                )
 
     await message.answer(
         LOCALIZATION[lang]["anketa_done"],
