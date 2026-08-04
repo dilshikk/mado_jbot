@@ -50,7 +50,8 @@ class Config:
     credentials_path:   Path
     fsm_storage_path:   str
     sheet_url:          str
-    required_channel:   str           
+    required_channel:   str
+    log_path:           str           # путь к лог-файлу
 
 
 def load_config() -> Config:
@@ -70,7 +71,8 @@ def load_config() -> Config:
             "SHEET_URL",
             "https://docs.google.com/spreadsheets/d/1rxds0GNVRZPF-D0RFfkdp0ZY4zEgl8TJjIyZ0Apl6rk/edit",
         ),
-        required_channel  = os.getenv("REQUIRED_CHANNEL", ""),  
+        required_channel  = os.getenv("REQUIRED_CHANNEL", ""),
+        log_path          = os.getenv("LOG_PATH", str(BASE_DIR / "bot.log")),
     )
 
 
@@ -85,4 +87,5 @@ GOOGLE_SHEET_NAME = config.google_sheet_name
 CREDENTIALS_PATH  = config.credentials_path
 FSM_STORAGE_PATH  = config.fsm_storage_path
 SHEET_URL         = config.sheet_url
-REQUIRED_CHANNEL  = config.required_channel  # ✅ экспортируем
+REQUIRED_CHANNEL  = config.required_channel
+LOG_PATH          = config.log_path
