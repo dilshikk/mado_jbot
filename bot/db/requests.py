@@ -1,5 +1,6 @@
 # bot/db/requests.py
 
+import json
 import logging
 from datetime import datetime, timedelta
 
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models.application import Application
 from bot.db.models.blacklist import Blacklist
+from bot.db.models.interview import InterviewSession
 from bot.db.models.user import User
 from bot.db.models.vacancy import Vacancy
 
@@ -477,3 +479,73 @@ async def get_latest_application(session: AsyncSession, user_id: int) -> dict | 
     except Exception as e:
         logger.error("get_latest_application error user=%d: %s", user_id, e, exc_info=True)
         return None
+
+
+# ── AI-интервью ────────────────────────────────────────────────────────────────
+
+async def create_interview_session(session: AsyncSession, user_id: int) -> int:
+    """Создаёт новую сессию интервью, возвращает её id."""
+    obj = InterviewSession(
+        user_id=user_id,
+        qa_log="[]",
+        q_count=0,
+        status="active",
+        created_at=_now(),
+    )
+    session.add(obj)
+    await session.commit()
+    return obj.id
+
+
+async def get_interview_session(session: AsyncSession, session_id: int) -> dict | None:
+    obj = await session.get(InterviewSession, session_id)
+    return _to_dict(obj) if obj else None
+
+
+async def update_interview_session(
+    session: AsyncSession,
+    session_id: int,
+    q_count: int | None = None,
+    status: str | None = None,
+) -> None:
+    obj = await session.get(InterviewSession, session_id)
+    if not obj:
+        return
+    if q_count is not None:
+        obj.q_count = q_count
+    if status is not None:
+        obj.status = status
+    await session.commit()
+
+
+async def append_qa(session: AsyncSession, session_id: int, qa_log: list[dict]) -> None:
+    """Перезаписывает qa_log в сессии интервью."""
+    obj = await session.get(InterviewSession, session_id)
+    if obj:
+        obj.qa_log  = json.dumps(qa_log, ensure_ascii=False)
+        obj.q_count = len(qa_log)
+        await session.commit()
+
+
+async def save_interview_reports(
+    session: AsyncSession,
+    session_id: int,
+    finished_at: str,
+    resume: str | None = None,
+    skills: str | None = None,
+    personality: str | None = None,
+    job_match: str | None = None,
+    summary: str | None = None,
+) -> None:
+    """Сохраняет результаты всех AI-агентов в сессию интервью."""
+    obj = await session.get(InterviewSession, session_id)
+    if not obj:
+        return
+    obj.status              = "done"
+    obj.finished_at         = finished_at
+    obj.report_resume       = resume
+    obj.report_skills       = skills
+    obj.report_personality  = personality
+    obj.report_job_match    = job_match
+    obj.report_summary      = summary
+    await session.commit()
