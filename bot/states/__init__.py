@@ -7,9 +7,10 @@ from bot.states.admin_states import (
     HRReview,
     HRScore,
 )
+from bot.states.interview import Interview
 from bot.states.user_forms import Form
 
 __all__ = [
     "AddVacancy", "Broadcast", "DashboardFilter",
-    "HRReview", "HRScore", "Form",
+    "HRReview", "HRScore", "Form", "Interview",
 ]
