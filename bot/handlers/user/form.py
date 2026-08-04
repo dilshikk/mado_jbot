@@ -278,9 +278,7 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
 
     user = message.from_user
 
-    # Финальная защита от дублей: между заполнением и подтверждением
-    # заявка могла уже появиться (например, HR вернул статус)
-    # Для администраторов проверка пропускается
+    # Финальная защита от дублей (для не-админов)
     is_admin = user.id in ADMIN_IDS
     if not is_admin:
         status = await db.get_application_status(session, user.id)
@@ -308,7 +306,7 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
     hr_keyboard = kb.get_hr_action_keyboard(phone=data.get("phone"), username=username_raw, candidate_id=user.id)
     hr_msg = await bot.send_message(chat_id=ADMIN_CHAT_ID, text=resume_text, reply_markup=hr_keyboard, parse_mode="HTML")
 
-    # AI-скрининг анкеты — отдельным сообщением под карточкой (fail-safe)
+    # AI-скрининг анкеты (первичный, до интервью)
     ai_summary = await screen_application(data)
     if ai_summary:
         try:
@@ -359,6 +357,26 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
             except Exception as notify_err:
                 logger.error("Не удалось уведомить admin_id=%d: %s", admin_id, notify_err)
 
+    # Подтверждение кандидату
     await message.answer(LOCALIZATION[lang]["anketa_done"], reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
+
+    # ── Запуск AI-интервью ────────────────────────────────────────────────────
+    # Импорт здесь чтобы избежать циклических зависимостей
+    from bot.handlers.user.interview import start_interview  # noqa: PLC0415
+
+    # Сохраняем form_data для интервью до очистки состояния
+    form_data_for_interview = dict(data)
+
     await state.clear()
     await state.update_data(lang=lang)
+
+    try:
+        await start_interview(
+            message=message,
+            state=state,
+            session=session,
+            form_data=form_data_for_interview,
+            lang=lang,
+        )
+    except Exception as e:
+        logger.error("Ошибка запуска интервью для user_id=%d: %s", user.id, e, exc_info=True)
