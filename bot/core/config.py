@@ -41,6 +41,12 @@ class Settings(BaseSettings):
 
     database_url: str = f"sqlite+aiosqlite:///{BASE_DIR / 'database.db'}"
 
+    # ── Cloudflare Workers AI (скрининг анкет) ────────────────────────────
+    cloudflare_account_id: str = ""
+    cloudflare_api_token: str = ""
+    ai_model: str = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+    ai_screening_enabled: bool = True
+
     @property
     def admin_ids_list(self) -> tuple[int, ...]:
         raw = self.admin_ids or (str(self.admin_chat_id) if self.admin_chat_id else "")
@@ -56,6 +62,14 @@ class Settings(BaseSettings):
     @property
     def effective_admin_chat_id(self) -> int:
         return self.admin_chat_id if self.admin_chat_id is not None else self.admin_ids_list[0]
+
+    @property
+    def ai_available(self) -> bool:
+        return (
+            self.ai_screening_enabled
+            and bool(self.cloudflare_account_id)
+            and bool(self.cloudflare_api_token)
+        )
 
     @property
     def log_level_int(self) -> int:
