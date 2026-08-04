@@ -81,12 +81,15 @@ async def start_anketa(message: Message, state: FSMContext, lang: str, session: 
         return
 
     # Защита от дублей: активная заявка любого типа блокирует новую подачу
-    status = await db.get_application_status(session, message.from_user.id)
-    if status in BLOCKING_STATUSES:
-        key = f"anketa_block_{status}"
-        text = LOCALIZATION[lang].get(key) or LOCALIZATION[lang]["anketa_block_pending"]
-        await message.answer(text, parse_mode="HTML")
-        return
+    # Для администраторов проверка пропускается — они могут тестировать анкету
+    is_admin = message.from_user.id in ADMIN_IDS
+    if not is_admin:
+        status = await db.get_application_status(session, message.from_user.id)
+        if status in BLOCKING_STATUSES:
+            key = f"anketa_block_{status}"
+            text = LOCALIZATION[lang].get(key) or LOCALIZATION[lang]["anketa_block_pending"]
+            await message.answer(text, parse_mode="HTML")
+            return
 
     await message.answer(LOCALIZATION[lang]["ask_branch"], reply_markup=kb.get_branch_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_branch)
@@ -277,12 +280,15 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
 
     # Финальная защита от дублей: между заполнением и подтверждением
     # заявка могла уже появиться (например, HR вернул статус)
-    status = await db.get_application_status(session, user.id)
-    if status in BLOCKING_STATUSES:
-        await message.answer(LOCALIZATION[lang]["anketa_already_exists"], reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
-        await state.clear()
-        await state.update_data(lang=lang)
-        return
+    # Для администраторов проверка пропускается
+    is_admin = user.id in ADMIN_IDS
+    if not is_admin:
+        status = await db.get_application_status(session, user.id)
+        if status in BLOCKING_STATUSES:
+            await message.answer(LOCALIZATION[lang]["anketa_already_exists"], reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
+            await state.clear()
+            await state.update_data(lang=lang)
+            return
 
     now_str      = datetime.now().strftime("%d.%m.%Y %H:%M")
     username_raw = user.username or LOCALIZATION["ru"]["none_text"]
