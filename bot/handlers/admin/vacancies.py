@@ -42,6 +42,12 @@ def _confirm_delete_keyboard(vacancy_id: int) -> InlineKeyboardMarkup:
     ]])
 
 
+def _cancel_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="❌ Отмена", callback_data="vac:add_cancel"),
+    ]])
+
+
 def _vacancy_list_text(vacancies: list[dict]) -> str:
     active = sum(1 for v in vacancies if v["is_active"])
     return (
@@ -71,7 +77,7 @@ async def vac_refresh(callback: CallbackQuery, state: FSMContext, session: Async
     try:
         await callback.message.edit_text(_vacancy_list_text(vacancies), parse_mode="HTML", reply_markup=_vacancies_keyboard(vacancies))
     except TelegramBadRequest:
-        pass  # Сообщение не изменилось — игнорируем
+        pass
     await callback.answer("✅ Обновлено")
 
 
@@ -91,7 +97,7 @@ async def vac_toggle(callback: CallbackQuery, session: AsyncSession) -> None:
     try:
         await callback.message.edit_text(_vacancy_list_text(vacancies), parse_mode="HTML", reply_markup=_vacancies_keyboard(vacancies))
     except TelegramBadRequest:
-        pass  # Сообщение не изменилось — игнорируем
+        pass
 
 
 @router.callback_query(F.data.startswith("vac:delete:"))
@@ -128,7 +134,7 @@ async def vac_delete_confirm(callback: CallbackQuery, session: AsyncSession) -> 
     try:
         await callback.message.edit_text(_vacancy_list_text(vacancies), parse_mode="HTML", reply_markup=_vacancies_keyboard(vacancies))
     except TelegramBadRequest:
-        pass  # Сообщение не изменилось — игнорируем
+        pass
 
 
 @router.callback_query(F.data == "vac:add")
@@ -137,11 +143,28 @@ async def vac_add_start(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         return
     await state.set_state(AddVacancy.waiting_name_ru)
-    await callback.message.answer(
+    sent = await callback.message.answer(
         "➕ <b>Новая вакансия</b>\n\n<b>Шаг 1/3.</b> Введите название на <b>русском</b>:\nНапример: <code>Хостес</code>",
         parse_mode="HTML",
+        reply_markup=_cancel_keyboard(),
     )
+    await state.update_data(wizard_message_id=sent.message_id)
     await callback.answer()
+
+
+@router.callback_query(F.data == "vac:add_cancel")
+async def vac_add_cancel(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+    await state.clear()
+    await callback.answer("Добавление отменено")
+    try:
+        await callback.message.delete()
+    except TelegramBadRequest:
+        pass
+    vacancies = await db.get_all_vacancies(session)
+    await callback.message.answer(_vacancy_list_text(vacancies), parse_mode="HTML", reply_markup=_vacancies_keyboard(vacancies))
 
 
 @router.message(AddVacancy.waiting_name_ru)
@@ -150,11 +173,29 @@ async def vac_got_name_ru(message: Message, state: FSMContext) -> None:
         return
     text = (message.text or "").strip()
     if len(text) < 2:
-        await message.answer("❌ Слишком короткое название. Введите ещё раз:")
+        await message.answer("❌ Слишком короткое название. Введите ещё раз:", reply_markup=_cancel_keyboard())
         return
     await state.update_data(name_ru=text)
     await state.set_state(AddVacancy.waiting_name_uz)
-    await message.answer("<b>Шаг 2/3.</b> Введите название на <b>узбекском</b>:\nНапример: <code>Xostes</code>", parse_mode="HTML")
+    # удаляем сообщение пользователя чтобы не засорять чат
+    try:
+        await message.delete()
+    except TelegramBadRequest:
+        pass
+    # обновляем wizard-сообщение на шаг 2
+    data = await state.get_data()
+    wizard_message_id = data.get("wizard_message_id")
+    if wizard_message_id:
+        try:
+            await message.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=wizard_message_id,
+                text="➕ <b>Новая вакансия</b>\n\n<b>Шаг 2/3.</b> Введите название на <b>узбекском</b>:\nНапример: <code>Xostes</code>",
+                parse_mode="HTML",
+                reply_markup=_cancel_keyboard(),
+            )
+        except TelegramBadRequest:
+            pass
 
 
 @router.message(AddVacancy.waiting_name_uz)
@@ -163,11 +204,27 @@ async def vac_got_name_uz(message: Message, state: FSMContext) -> None:
         return
     text = (message.text or "").strip()
     if len(text) < 2:
-        await message.answer("❌ Слишком короткое название. Введите ещё раз:")
+        await message.answer("❌ Слишком короткое название. Введите ещё раз:", reply_markup=_cancel_keyboard())
         return
     await state.update_data(name_uz=text)
     await state.set_state(AddVacancy.waiting_emoji)
-    await message.answer("<b>Шаг 3/3.</b> Отправьте <b>эмодзи</b>.\nИли /skip чтобы пропустить.", parse_mode="HTML")
+    try:
+        await message.delete()
+    except TelegramBadRequest:
+        pass
+    data = await state.get_data()
+    wizard_message_id = data.get("wizard_message_id")
+    if wizard_message_id:
+        try:
+            await message.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=wizard_message_id,
+                text="➕ <b>Новая вакансия</b>\n\n<b>Шаг 3/3.</b> Отправьте <b>эмодзи</b>.\nИли /skip чтобы пропустить.",
+                parse_mode="HTML",
+                reply_markup=_cancel_keyboard(),
+            )
+        except TelegramBadRequest:
+            pass
 
 
 @router.message(AddVacancy.waiting_emoji, F.text == "/skip")
@@ -188,9 +245,20 @@ async def _save_new_vacancy(message: Message, state: FSMContext, session: AsyncS
     data       = await state.get_data()
     name_ru    = data["name_ru"]
     name_uz    = data["name_uz"]
+    wizard_message_id = data.get("wizard_message_id")
     vacancy_id = await db.add_vacancy(session, name_ru, name_uz, emoji)
     logger.info("Добавлена вакансия id=%d: %s / %s", vacancy_id, name_ru, name_uz)
     await state.clear()
+    # удаляем wizard-сообщение и сообщение пользователя
+    try:
+        await message.delete()
+    except TelegramBadRequest:
+        pass
+    if wizard_message_id:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=wizard_message_id)
+        except TelegramBadRequest:
+            pass
     label = f"{emoji} {name_ru}".strip()
     await message.answer(
         f"✅ <b>Вакансия добавлена!</b>\n\n💼 {label}\n🇺🇿 {name_uz}\n\nИспользуйте /vacancies для управления.",
