@@ -3,6 +3,7 @@
 import logging
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -67,8 +68,11 @@ async def vac_refresh(callback: CallbackQuery, state: FSMContext, session: Async
         return
     await state.clear()
     vacancies = await db.get_all_vacancies(session)
-    await callback.message.edit_text(_vacancy_list_text(vacancies), parse_mode="HTML", reply_markup=_vacancies_keyboard(vacancies))
-    await callback.answer()
+    try:
+        await callback.message.edit_text(_vacancy_list_text(vacancies), parse_mode="HTML", reply_markup=_vacancies_keyboard(vacancies))
+    except TelegramBadRequest:
+        pass  # Сообщение не изменилось — игнорируем
+    await callback.answer("✅ Обновлено")
 
 
 @router.callback_query(F.data.startswith("vac:toggle:"))
@@ -84,7 +88,10 @@ async def vac_toggle(callback: CallbackQuery, session: AsyncSession) -> None:
     await callback.answer(f"Вакансия «{name}» {status_text}")
     logger.info("Вакансия id=%d %s", vacancy_id, status_text)
     vacancies = await db.get_all_vacancies(session)
-    await callback.message.edit_text(_vacancy_list_text(vacancies), parse_mode="HTML", reply_markup=_vacancies_keyboard(vacancies))
+    try:
+        await callback.message.edit_text(_vacancy_list_text(vacancies), parse_mode="HTML", reply_markup=_vacancies_keyboard(vacancies))
+    except TelegramBadRequest:
+        pass  # Сообщение не изменилось — игнорируем
 
 
 @router.callback_query(F.data.startswith("vac:delete:"))
@@ -118,7 +125,10 @@ async def vac_delete_confirm(callback: CallbackQuery, session: AsyncSession) -> 
     logger.info("Вакансия id=%d «%s» удалена", vacancy_id, name)
     await callback.answer(f"Вакансия «{name}» удалена.", show_alert=True)
     vacancies = await db.get_all_vacancies(session)
-    await callback.message.edit_text(_vacancy_list_text(vacancies), parse_mode="HTML", reply_markup=_vacancies_keyboard(vacancies))
+    try:
+        await callback.message.edit_text(_vacancy_list_text(vacancies), parse_mode="HTML", reply_markup=_vacancies_keyboard(vacancies))
+    except TelegramBadRequest:
+        pass  # Сообщение не изменилось — игнорируем
 
 
 @router.callback_query(F.data == "vac:add")
