@@ -6,7 +6,7 @@ from functools import lru_cache
 import gspread
 from google.oauth2.service_account import Credentials
 
-from config import CREDENTIALS_PATH, GOOGLE_SHEET_NAME
+from bot.core.config import CREDENTIALS_PATH, GOOGLE_SHEET_NAME
 
 logger = logging.getLogger(__name__)
 

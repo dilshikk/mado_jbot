@@ -7,17 +7,20 @@ from datetime import datetime
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
-from bot.db import database as db
+from bot.db import requests as db
+from bot.db.base import session_pool
 
 logger = logging.getLogger(__name__)
 _NOTIFY_DELAY = 0.05
 
 
 async def send_interview_reminders(bot: Bot) -> None:
-    pending = db.get_pending_reminders()
+    async with session_pool() as session:
+        pending = await db.get_pending_reminders(session)
     if not pending:
         return
     logger.info("send_interview_reminders: найдено %d напоминаний", len(pending))
+
     for row in pending:
         lang           = row.get("lang") or "ru"
         interview_time = row["interview_time"]
@@ -38,15 +41,18 @@ async def send_interview_reminders(bot: Bot) -> None:
         except Exception as e:
             logger.error("Ошибка напоминания user_id=%d: %s", row["user_id"], e, exc_info=True)
         finally:
-            db.mark_reminder_sent(row["id"])
+            async with session_pool() as session:
+                await db.mark_reminder_sent(session, row["id"])
         await asyncio.sleep(_NOTIFY_DELAY)
 
 
 async def notify_stale_applications(bot: Bot) -> None:
-    stale = db.get_stale_pending_applications(days=3)
+    async with session_pool() as session:
+        stale = await db.get_stale_pending_applications(session, days=3)
     if not stale:
         return
     logger.info("notify_stale_applications: найдено %d анкет", len(stale))
+
     for row in stale:
         lang = row.get("lang") or "ru"
         text = (
@@ -61,22 +67,29 @@ async def notify_stale_applications(bot: Bot) -> None:
         except Exception as e:
             logger.error("Ошибка stale notify user_id=%d: %s", row["user_id"], e, exc_info=True)
         finally:
-            db.mark_pending_notified(row["id"])
+            async with session_pool() as session:
+                await db.mark_pending_notified(session, row["id"])
         await asyncio.sleep(_NOTIFY_DELAY)
 
 
 async def auto_unblock_users(bot: Bot) -> None:
-    user_ids = db.get_users_to_unblock()
+    async with session_pool() as session:
+        user_ids = await db.get_users_to_unblock(session)
     if not user_ids:
         return
     logger.info("auto_unblock_users: разблокировать %d пользователей", len(user_ids))
+
     for user_id in user_ids:
         try:
-            db.unblock_user(user_id)
+            async with session_pool() as session:
+                await db.unblock_user(session, user_id)
         except Exception as e:
             logger.error("Ошибка разблокировки user_id=%d: %s", user_id, e, exc_info=True)
             continue
-        lang = db.get_user_lang(user_id) or "ru"
+
+        async with session_pool() as session:
+            lang = await db.get_user_lang(session, user_id)
+        lang = lang or "ru"
         text = (
             "🔓 <b>Хорошие новости!</b>\n\nВаша временная блокировка снята. Вы снова можете подать анкету в MADO!"
             if lang == "ru" else

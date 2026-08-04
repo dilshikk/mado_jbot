@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from bot.messages import LOCALIZATION
+from bot.lexicon import LOCALIZATION
 
 _NONE_PLACEHOLDER = "—"
 
