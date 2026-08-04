@@ -17,7 +17,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram_sqlite_storage.sqlitestore import SQLStorage
 
 from config import BOT_TOKEN, ADMIN_CHAT_ID, LOG_PATH, LOG_LEVEL
-from handlers import admin_broadcast, form, hr, hr_dashboard, user, subscription
+from handlers import admin_broadcast, admin_vacancies, form, hr, hr_dashboard, user, subscription
 from messages import LOCALIZATION
 from middlewares.lang import LangMiddleware
 from middlewares.rate_limit import RateLimitMiddleware
@@ -30,13 +30,11 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
-        logging.StreamHandler(),             # stdout → journald
-        logging.FileHandler(LOG_PATH),       # путь из .env (LOG_PATH)
+        logging.StreamHandler(),
+        logging.FileHandler(LOG_PATH),
     ],
 )
 
-# Подавляем слишком подробные логи сторонних библиотек
-# на уровнях выше DEBUG, чтобы не засорять файл в production
 if LOG_LEVEL > logging.DEBUG:
     logging.getLogger("aiogram").setLevel(logging.WARNING)
     logging.getLogger("apscheduler").setLevel(logging.WARNING)
@@ -81,7 +79,7 @@ async def handle_group_messages(message: Message) -> None:
 def create_dispatcher(storage: SQLStorage) -> Dispatcher:
     dp = Dispatcher(storage=storage)
 
-    # Rate limiting — первым, чтобы отсекать спам до остальной логики
+    # Rate limiting — первым, до остальной логики
     dp.message.outer_middleware(RateLimitMiddleware())
     dp.callback_query.outer_middleware(RateLimitMiddleware())
 
@@ -93,6 +91,7 @@ def create_dispatcher(storage: SQLStorage) -> Dispatcher:
     dp.include_router(hr.router)
     dp.include_router(hr_dashboard.router)
     dp.include_router(admin_broadcast.router)
+    dp.include_router(admin_vacancies.router)   # управление вакансиями
     dp.include_router(user.router)
     dp.include_router(form.router)
 
