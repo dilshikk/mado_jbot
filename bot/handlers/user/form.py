@@ -16,6 +16,7 @@ from bot.db import requests as db
 from bot.filters.common import IsCancelMessage, IsPrivateChat
 from bot import keyboards as kb
 from bot.lexicon import LOCALIZATION
+from bot.services.ai import screen_application
 from bot.services.gsheets import append_to_sheet
 from bot.states import Form
 from bot.utils.formatters import build_hr_resume_text, build_resume_text
@@ -299,7 +300,20 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
 
     resume_text = build_hr_resume_text(data, user.id, username_raw)
     hr_keyboard = kb.get_hr_action_keyboard(phone=data.get("phone"), username=username_raw, candidate_id=user.id)
-    await bot.send_message(chat_id=ADMIN_CHAT_ID, text=resume_text, reply_markup=hr_keyboard, parse_mode="HTML")
+    hr_msg = await bot.send_message(chat_id=ADMIN_CHAT_ID, text=resume_text, reply_markup=hr_keyboard, parse_mode="HTML")
+
+    # AI-скрининг анкеты — отдельным сообщением под карточкой (fail-safe)
+    ai_summary = await screen_application(data)
+    if ai_summary:
+        try:
+            await bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=f"🤖 <b>AI-скрининг</b>\n{'─'*24}\n{ai_summary}",
+                parse_mode="HTML",
+                reply_to_message_id=hr_msg.message_id,
+            )
+        except Exception as e:
+            logger.error("Не удалось отправить AI-скрининг: %s", e)
 
     video_file_id = data.get("video_file_id")
     if video_file_id:
