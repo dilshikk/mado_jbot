@@ -22,6 +22,7 @@ from bot.handlers.hr import actions as hr
 from bot.handlers.hr import dashboard as hr_dashboard
 from bot.handlers.user import common as user
 from bot.handlers.user import form
+from bot.handlers.user import interview as user_interview
 from bot.handlers.user import subscription
 
 
@@ -55,6 +56,8 @@ def create_dispatcher(storage: SQLStorage) -> Dispatcher:
     dp.include_router(admin_vacancies.router)
     dp.include_router(user.router)
     dp.include_router(form.router)
+    # AI-интервью — должен быть после form, чтобы его FSM не перехватывал анкету
+    dp.include_router(user_interview.router)
 
     dp.message.register(
         handle_group_messages,
