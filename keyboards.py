@@ -169,6 +169,26 @@ def get_confirmation_keyboard(lang: str) -> ReplyKeyboardMarkup:
     )
 
 
+def get_experience_keyboard(lang: str) -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            _row(
+                KeyboardButton(text="Нет опыта" if lang == "ru" else "Tajriba yo'q"),
+                KeyboardButton(text="Менее 1 года" if lang == "ru" else "1 yildan kam"),
+            ),
+            _row(
+                KeyboardButton(text="1–2 года" if lang == "ru" else "1–2 yil"),
+                KeyboardButton(text="3–5 лет" if lang == "ru" else "3–5 yil"),
+            ),
+            _row(
+                KeyboardButton(text="5+ лет" if lang == "ru" else "5+ yil"),
+            ),
+            _row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")),
+        ],
+        resize_keyboard=True,
+    )
+
+
 def remove_keyboard() -> ReplyKeyboardRemove:
     return ReplyKeyboardRemove()
 
@@ -181,6 +201,7 @@ def get_score_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text=f"{i}⭐", callback_data=f"score:{i}:{candidate_id}")
         for i in range(1, 6)
     ]])
+
 
 def get_post_interview_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
     """Клавиатура после собеседования — принять на работу или отклонить."""
@@ -203,33 +224,6 @@ def get_post_interview_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
         ],
     ])
 
-def get_score_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
-    """Кнопки оценки кандидата 1–5 звёзд."""
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=f"{i}⭐", callback_data=f"score:{i}:{candidate_id}")
-        for i in range(1, 6)
-    ]])
-
-def get_experience_keyboard(lang: str) -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            _row(
-                KeyboardButton(text="Нет опыта" if lang == "ru" else "Tajriba yo'q"),
-                KeyboardButton(text="Менее 1 года" if lang == "ru" else "1 yildan kam"),
-            ),
-            _row(
-                KeyboardButton(text="1–2 года" if lang == "ru" else "1–2 yil"),
-                KeyboardButton(text="3–5 лет" if lang == "ru" else "3–5 yil"),
-            ),
-            _row(
-                KeyboardButton(text="5+ лет" if lang == "ru" else "5+ yil"),
-            ),
-            _row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")),
-        ],
-        resize_keyboard=True,
-    )
-
-# ← сюда вставить get_post_interview_keyboard
 
 def get_hr_action_keyboard(
     phone: str,
