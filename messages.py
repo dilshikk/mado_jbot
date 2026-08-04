@@ -1,0 +1,315 @@
+# messages.py
+
+from typing import Any
+
+LOCALIZATION: dict[str, dict[str, Any]] = {
+    "ru": {
+        # ── Общее ─────────────────────────────────────────────────────────────
+        "welcome":          "👋 Добро пожаловать в <b>MADO</b>!\n\nЗдесь вы можете оставить заявку на работу в нашем ресторане.",
+        "about_text":       "🏢 <b>MADO</b> — международная сеть ресторанов, объединяющая лучшие кулинарные традиции.\n\nМы всегда рады талантливым сотрудникам!",
+        "anketa_cancelled": "❌ Заполнение анкеты отменено. Вы вернулись в главное меню.",
+        "none_text":        "отсутствует",
+
+        # ── Блокировка ────────────────────────────────────────────────────────
+        "user_blocked_text": (
+            "⚠️ <b>Доступ ограничен.</b>\n\n"
+            "Ваша анкета была отклонена ранее. "
+            "Повторная подача временно недоступна.\n"
+            "Если вы считаете это ошибкой — свяжитесь с нами."
+        ),
+
+        # ── Подписка на канал ─────────────────────────────────────────────────
+        "subscription_not_subscribed": (
+            "🔒 <b>Доступ ограничен</b>\n\n"
+            "Чтобы использовать бота, подпишитесь на наш канал.\n\n"
+            "После подписки нажмите <b>«✅ Я подписался»</b>."
+        ),
+        "subscription_confirmed":       "✅ <b>Отлично! Подписка подтверждена.</b>\n\nТеперь вы можете пользоваться ботом. Отправьте /start для начала работы.",
+        "subscription_confirmed_alert": "✅ Подписка подтверждена!",
+        "subscription_not_done":        "❌ Вы всё ещё не подписаны. Подпишитесь и попробуйте снова.",
+        "btn_subscribe_channel":        "📢 Подписаться на канал",
+        "btn_check_subscription":       "✅ Я подписался",
+
+        # ── Шаги анкеты ───────────────────────────────────────────────────────
+        "ask_branch":      "📍 Выберите <b>филиал</b>, в котором хотите работать:",
+        "ask_position":    "💼 Выберите <b>желаемую вакансию</b>:",
+        "ask_name":        "👤 Введите ваши <b>ФИО</b> полностью:",
+        "ask_birthday":    "📅 Введите <b>дату рождения</b> в формате ДД.ММ.ГГГГ\nНапример: <code>25.06.1995</code>",
+        "ask_gender":      "🚻 Укажите ваш <b>пол</b>:",
+        "ask_family":      "💍 Укажите <b>семейное положение</b>:",
+        "ask_citizenship": "🔹 Укажите <b>гражданство</b>:",
+        "ask_address":     "🏡 Введите <b>адрес проживания</b>\n(город, район, улица / квартал):",
+        "ask_phone":       "📱 Отправьте ваш <b>номер телефона</b>:",
+
+        # ── Ошибки валидации ──────────────────────────────────────────────────
+        "bad_birthday": (
+            "❌ Неверный формат даты.\n"
+            "Введите в формате <b>ДД.ММ.ГГГГ</b>, например: <code>25.06.1995</code>"
+        ),
+        "bad_name": (
+            "❌ Пожалуйста, введите корректное ФИО.\n"
+            "Минимум 3 символа, только буквы."
+        ),
+
+        # ── Пол ───────────────────────────────────────────────────────────────
+        "gender_male":   "🚹 Мужской",
+        "gender_female": "🚺 Женский",
+
+        # ── Семья ─────────────────────────────────────────────────────────────
+        "family_single":  "💍 Холост / Не замужем",
+        "family_married": "👨‍👩‍👦 Женат / Замужем",
+
+        # ── Гражданство ───────────────────────────────────────────────────────
+        "citizenship_uzb": "🇺🇿 Узбекистан",
+
+        # ── Вакансии ──────────────────────────────────────────────────────────
+        "pos_cook":    "Повар 👨‍🍳",
+        "pos_waiter":  "Официант 🤵",
+        "pos_runner":  "Раннер 🏃‍♂️",
+        "pos_barista": "Бариста ☕️",
+        "pos_cleaner": "Тех. персонал 🧹",
+
+        # ── Кнопки интерфейса ─────────────────────────────────────────────────
+        "btn_apply":       "📝 Заполнить анкету",
+        "btn_about":       "🏢 О ресторане",
+        "btn_change_lang": "🌐 Сменить язык",
+        "btn_cancel":      "❌ Отменить заполнение",
+        "btn_share_phone": "📱 Поделиться контактом",
+
+        # ── Подтверждение ─────────────────────────────────────────────────────
+        "confirm_title":     "📋 <b>Проверьте ваши данные перед отправкой:</b>",
+        "confirm_btn_yes":   "✅ Всё верно — отправить",
+        "confirm_btn_no":    "🔄 Заполнить заново",
+        "field_branch":      "Филиал",
+        "field_position":    "Вакансия",
+        "field_name":        "ФИО",
+        "field_birthday":    "Дата рождения",
+        "field_gender":      "Пол",
+        "field_family":      "Семейное положение",
+        "field_citizenship": "Гражданство",
+        "field_address":     "Адрес",
+        "field_phone":       "Телефон",
+        "field_username":    "Username",
+
+        # ── Финал анкеты ──────────────────────────────────────────────────────
+        "anketa_done": (
+            "🎉 <b>Анкета успешно отправлена!</b>\n\n"
+            "Наш HR-менеджер рассмотрит вашу заявку и свяжется с вами.\n"
+            "Среднее время ответа — <b>1–2 рабочих дня</b>."
+        ),
+
+        # ── Статус заявки ─────────────────────────────────────────────────────
+        "status_none":     "📋 У вас нет активных заявок.",
+        "status_pending":  "⏳ Ваша анкета на рассмотрении. Ожидайте ответа.",
+        "status_accepted": "✅ Поздравляем! Вас пригласили на собеседование.",
+        "status_rejected": "❌ К сожалению, ваша заявка была отклонена.",
+        "status_error":    "Не удалось получить статус. Попробуйте позже.",
+        "statuses": {
+            "none":     "📋 У вас нет активных заявок.",
+            "pending":  "⏳ Ваша анкета на рассмотрении.",
+            "accepted": "✅ Вас пригласили на собеседование!",
+            "rejected": "❌ Ваша заявка отклонена.",
+            "hold":     "⏸ Ваша анкета временно отложена.",
+        },
+
+        # ── Рассылка ──────────────────────────────────────────────────────────
+        "broadcast_no_reply": "↩️ Ответьте на сообщение, которое хотите разослать.",
+        "broadcast_progress": "📤 Отправляю... {current} / {total}",
+        "broadcast_done": (
+            "📬 <b>Рассылка завершена</b>\n"
+            "✅ Отправлено: <b>{sent}</b>\n"
+            "❌ Ошибок:     <b>{failed}</b>"
+        ),
+
+        # ── Защита групп ──────────────────────────────────────────────────────
+        "group_protection_text": (
+            "⚠️ <b>Заполнение анкеты доступно только в личных сообщениях с ботом!</b>\n"
+            "Нажмите кнопку ниже, чтобы перейти в личный чат 👇"
+        ),
+        "btn_redirect_pm": "🚀 Открыть в личных сообщениях",
+
+        # ── HR-панель ─────────────────────────────────────────────────────────
+        "default_anketa_title":  "📝 Анкета кандидата MADO",
+        "hr_resume_title":       "Новая анкета кандидата MADO",
+        "hr_ask_interview": (
+            "✍️ <b>Укажите дату и время собеседования.</b>\n\n"
+            "⚠️ <b>ВАЖНО:</b> нажмите <b>Ответить (Reply)</b> на это сообщение и введите дату.\n"
+            "Например: <code>25 июня в 15:00, ресторан MADO TCM</code>"
+        ),
+        "candidate_accepted_notice": (
+            "🎉 <b>Ваша анкета одобрена!</b>\n\n"
+            "Приглашаем вас на личное собеседование в ресторан MADO.\n"
+            "🗓 <b>Дата и время:</b> <code>{interview_text}</code>\n\n"
+            "Пожалуйста, приходите вовремя. Ждём вас!"
+        ),
+        "candidate_rejected_notice": (
+            "😔 <b>К сожалению, в данный момент мы не готовы пригласить вас на собеседование.</b>\n\n"
+            "Ваша анкета сохранена в резерве. Вы сможете попробовать снова позже.\n"
+            "Благодарим за интерес к бренду MADO!"
+        ),
+        "hr_status_accepted":  "🟢 <b>СТАТУС:</b> Одобрено. Собеседование: <code>{interview_text}</code>",
+        "hr_status_rejected":  "🔴 <b>СТАТУС:</b> Отклонён. Пользователь заблокирован.",
+        "hr_status_hold":      "⏸ <b>СТАТУС:</b> На паузе. Ожидает решения.",
+        "hr_success_sent":     "✅ Уведомление успешно отправлено кандидату.",
+        "hr_alert_rejected":   "Кандидат отклонён и заблокирован.",
+        "hr_action_cancelled": "🔄 Действие отменено.",
+        "hr_stats_text": (
+            "📊 <b>Статистика HR-бота MADO</b>\n\n"
+            "👥 Пользователей в базе: <b>{total_users}</b>\n"
+            "📝 Отправлено анкет: <b>{total_apps}</b>"
+        ),
+    },
+
+    "uz": {
+        # ── Общее ─────────────────────────────────────────────────────────────
+        "welcome":          "👋 <b>MADO</b>-ga xush kelibsiz!\n\nBu yerda restoranimizda ishlash uchun ariza topshirishingiz mumkin.",
+        "about_text":       "🏢 <b>MADO</b> — eng yaxshi oshxona an'analarini birlashtirgan xalqaro restoranlar tarmog'i.\n\nBiz doim iqtidorli xodimlarga xursandmiz!",
+        "anketa_cancelled": "❌ Anketa to'ldirish bekor qilindi. Asosiy menyuga qaytdingiz.",
+        "none_text":        "mavjud emas",
+
+        # ── Блокировка ────────────────────────────────────────────────────────
+        "user_blocked_text": (
+            "⚠️ <b>Kirish cheklangan.</b>\n\n"
+            "Sizning anketangiz avval rad etilgan. "
+            "Qayta topshirish vaqtincha mumkin emas.\n"
+            "Agar bu xato deb o'ylasangiz — biz bilan bog'laning."
+        ),
+
+        # ── Подписка на канал ─────────────────────────────────────────────────
+        "subscription_not_subscribed": (
+            "🔒 <b>Kirish cheklangan</b>\n\n"
+            "Botdan foydalanish uchun kanalimizga obuna bo'ling.\n\n"
+            "Obuna bo'lgandan so'ng <b>«✅ Obuna bo'ldim»</b> tugmasini bosing."
+        ),
+        "subscription_confirmed":       "✅ <b>Ajoyib! Obuna tasdiqlandi.</b>\n\nEndi botdan foydalanishingiz mumkin. Boshlash uchun /start yuboring.",
+        "subscription_confirmed_alert": "✅ Obuna tasdiqlandi!",
+        "subscription_not_done":        "❌ Siz hali obuna bo'lmadingiz. Obuna bo'lib, qayta urinib ko'ring.",
+        "btn_subscribe_channel":        "📢 Kanalga obuna bo'lish",
+        "btn_check_subscription":       "✅ Obuna bo'ldim",
+
+        # ── Шаги анкеты ───────────────────────────────────────────────────────
+        "ask_branch":      "📍 Ishlamoqchi bo'lgan <b>filialni</b> tanlang:",
+        "ask_position":    "💼 <b>Bo'sh ish o'rnini</b> tanlang:",
+        "ask_name":        "👤 <b>F.I.Sh.</b> ni to'liq kiriting:",
+        "ask_birthday":    "📅 <b>Tug'ilgan sanangizni</b> DD.MM.YYYY formatida kiriting\nMasalan: <code>25.06.1995</code>",
+        "ask_gender":      "🚻 <b>Jinsingizni</b> ko'rsating:",
+        "ask_family":      "💍 <b>Oilaviy ahvolingizni</b> ko'rsating:",
+        "ask_citizenship": "🔹 <b>Fuqaroligingizni</b> ko'rsating:",
+        "ask_address":     "🏡 <b>Yashash manzilingizni</b> kiriting\n(shahar, tuman, ko'cha / kvartal):",
+        "ask_phone":       "📱 <b>Telefon raqamingizni</b> yuboring:",
+
+        # ── Ошибки валидации ──────────────────────────────────────────────────
+        "bad_birthday": (
+            "❌ Sana formati noto'g'ri.\n"
+            "<b>DD.MM.YYYY</b> formatida kiriting, masalan: <code>25.06.1995</code>"
+        ),
+        "bad_name": (
+            "❌ Iltimos, to'g'ri F.I.Sh. kiriting.\n"
+            "Kamida 3 ta harf, faqat harflar."
+        ),
+
+        # ── Пол ───────────────────────────────────────────────────────────────
+        "gender_male":   "🚹 Erkak",
+        "gender_female": "🚺 Ayol",
+
+        # ── Семья ─────────────────────────────────────────────────────────────
+        "family_single":  "💍 Bo'ydoq / Turmushga chiqmagan",
+        "family_married": "👨‍👩‍👦 Oila qurgan",
+
+        # ── Гражданство ───────────────────────────────────────────────────────
+        "citizenship_uzb": "🇺🇿 O'zbekiston",
+
+        # ── Вакансии ──────────────────────────────────────────────────────────
+        "pos_cook":    "Oshpaz 👨‍🍳",
+        "pos_waiter":  "Ofitsiant 🤵",
+        "pos_runner":  "Yuguruvchi 🏃‍♂️",
+        "pos_barista": "Barista ☕️",
+        "pos_cleaner": "Texnik xodim 🧹",
+
+        # ── Кнопки интерфейса ─────────────────────────────────────────────────
+        "btn_apply":       "📝 Anketani to'ldirish",
+        "btn_about":       "🏢 Restoran haqida",
+        "btn_change_lang": "🌐 Tilni o'zgartirish",
+        "btn_cancel":      "❌ Bekor qilish",
+        "btn_share_phone": "📱 Kontaktni yuborish",
+
+        # ── Подтверждение ─────────────────────────────────────────────────────
+        "confirm_title":     "📋 <b>Yuborishdan oldin ma'lumotlaringizni tekshiring:</b>",
+        "confirm_btn_yes":   "✅ Hammasi to'g'ri — yuborish",
+        "confirm_btn_no":    "🔄 Qaytadan to'ldirish",
+        "field_branch":      "Filial",
+        "field_position":    "Bo'sh ish o'rni",
+        "field_name":        "F.I.Sh.",
+        "field_birthday":    "Tug'ilgan sana",
+        "field_gender":      "Jinsi",
+        "field_family":      "Oilaviy ahvoli",
+        "field_citizenship": "Fuqaroligi",
+        "field_address":     "Manzil",
+        "field_phone":       "Telefon",
+        "field_username":    "Username",
+
+        # ── Финал анкеты ──────────────────────────────────────────────────────
+        "anketa_done": (
+            "🎉 <b>Anketa muvaffaqiyatli yuborildi!</b>\n\n"
+            "HR menejerimiz arizangizni ko'rib chiqadi va siz bilan bog'lanadi.\n"
+            "O'rtacha javob vaqti — <b>1–2 ish kuni</b>."
+        ),
+
+        # ── Статус заявки ─────────────────────────────────────────────────────
+        "status_none":     "📋 Sizning faol arizangiz yo'q.",
+        "status_pending":  "⏳ Arizangiz ko'rib chiqilmoqda. Javobni kuting.",
+        "status_accepted": "✅ Tabriklaymiz! Siz suhbatga taklif etildingiz.",
+        "status_rejected": "❌ Afsuski, arizangiz rad etildi.",
+        "status_error":    "Holatni olib bo'lmadi. Keyinroq urinib ko'ring.",
+        "statuses": {
+            "none":     "📋 Sizning faol arizangiz yo'q.",
+            "pending":  "⏳ Arizangiz ko'rib chiqilmoqda.",
+            "accepted": "✅ Siz suhbatga taklif etildingiz!",
+            "rejected": "❌ Arizangiz rad etildi.",
+            "hold":     "⏸ Arizangiz vaqtincha qoldirildi.",
+        },
+
+        # ── Рассылка ──────────────────────────────────────────────────────────
+        "broadcast_no_reply": "↩️ Tarqatmoqchi bo'lgan xabarga javob bering.",
+        "broadcast_progress": "📤 Yuborilmoqda... {current} / {total}",
+        "broadcast_done": (
+            "📬 <b>Tarqatish yakunlandi</b>\n"
+            "✅ Yuborildi: <b>{sent}</b>\n"
+            "❌ Xato:      <b>{failed}</b>"
+        ),
+
+        # ── Защита групп ──────────────────────────────────────────────────────
+        "group_protection_text": (
+            "⚠️ <b>Anketa faqat bot bilan shaxsiy xabarlarda to'ldiriladi!</b>\n"
+            "Shaxsiy chatga o'tish uchun quyidagi tugmani bosing 👇"
+        ),
+        "btn_redirect_pm": "🚀 Shaxsiy xabarda ochish",
+
+        # ── HR-панель (уведомления кандидатам на узбекском) ───────────────────
+        "default_anketa_title":  "📝 MADO nomzod anketi",
+        "hr_resume_title":       "MADO yangi nomzod anketi",
+        "hr_ask_interview":      "",  # HR-интерфейс всегда на русском
+        "candidate_accepted_notice": (
+            "🎉 <b>Anketangiz tasdiqlandi!</b>\n\n"
+            "Sizni MADO restoraniga shaxsiy suhbatga taklif qilamiz.\n"
+            "🗓 <b>Sana va vaqt:</b> <code>{interview_text}</code>\n\n"
+            "Iltimos, vaqtida keling. Sizni kutamiz!"
+        ),
+        "candidate_rejected_notice": (
+            "😔 <b>Afsuski, hozirda sizni suhbatga taklif eta olmaymiz.</b>\n\n"
+            "Anketangiz zaxiramizda saqlanib qoladi. Keyinroq qayta urinib ko'rishingiz mumkin.\n"
+            "MADO brendiga qiziqish bildirganingiz uchun rahmat!"
+        ),
+        "hr_status_accepted":  "🟢 <b>STATUS:</b> Tasdiqlandi. Suhbat: <code>{interview_text}</code>",
+        "hr_status_rejected":  "🔴 <b>STATUS:</b> Rad etildi. Foydalanuvchi bloklandi.",
+        "hr_status_hold":      "⏸ <b>STATUS:</b> Kutish rejimida.",
+        "hr_success_sent":     "✅ Xabarnoma nomzodga muvaffaqiyatli yuborildi.",
+        "hr_alert_rejected":   "Nomzod rad etildi va bloklandi.",
+        "hr_action_cancelled": "🔄 Amal bekor qilindi.",
+        "hr_stats_text": (
+            "📊 <b>MADO HR-bot statistikasi</b>\n\n"
+            "👥 Bazadagi foydalanuvchilar: <b>{total_users}</b>\n"
+            "📝 Yuborilgan anketalar: <b>{total_apps}</b>"
+        ),
+    },
+}
