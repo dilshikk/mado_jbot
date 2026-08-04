@@ -138,13 +138,13 @@ async def broadcast_got_url(message: Message, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data == "broadcast:skip_url", Broadcast.waiting_url)
-async def broadcast_skip_url(callback: CallbackQuery, state: FSMContext) -> None:
+async def broadcast_skip_url(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer()
         return
     await state.update_data(url=None, url_title=None)
     await callback.answer()
-    await _show_preview(callback.message, state)
+    await _show_preview(callback.message, state, session)
 
 
 async def _ask_url_title(message: Message, state: FSMContext) -> None:
@@ -156,21 +156,21 @@ async def _ask_url_title(message: Message, state: FSMContext) -> None:
 
 
 @router.message(Broadcast.waiting_url_title, F.text)
-async def broadcast_got_url_title(message: Message, state: FSMContext) -> None:
+async def broadcast_got_url_title(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if not _is_admin(message.from_user.id):
         return
     await state.update_data(url_title=message.text.strip())
-    await _show_preview(message, state)
+    await _show_preview(message, state, session)
 
 
-async def _show_preview(message: Message, state: FSMContext, session: AsyncSession | None = None) -> None:
+async def _show_preview(message: Message, state: FSMContext, session: AsyncSession) -> None:
     data      = await state.get_data()
     photo_id  = data.get("photo_file_id")
     caption   = data.get("caption", "")
     url       = data.get("url")
     url_title = data.get("url_title", "🔗 Подробнее")
     url_kb    = _url_keyboard(url, url_title)
-    count     = len(await db.get_all_user_ids(session)) if session else 0
+    count     = len(await db.get_all_user_ids(session))
     await state.set_state(Broadcast.preview)
     await message.answer(
         f"👁 <b>Предпросмотр рассылки</b>\n👥 Получателей: <b>{count}</b>\n{'─'*28}",
