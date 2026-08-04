@@ -15,7 +15,6 @@ DB_PATH = str(BASE_DIR / "database.db")
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    # Включаем WAL для лучшей конкурентности чтения
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
@@ -58,8 +57,44 @@ def init_db() -> None:
                 blocked_at TEXT,
                 unblock_at TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS vacancies (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                name_ru    TEXT NOT NULL,
+                name_uz    TEXT NOT NULL,
+                emoji      TEXT DEFAULT '',
+                is_active  INTEGER DEFAULT 1,
+                sort_order INTEGER DEFAULT 0,
+                created_at TEXT
+            );
         """)
+
+    # Заполняем дефолтными вакансиями если таблица пустая
+    _seed_vacancies()
     logger.info("БД инициализирована: %s", DB_PATH)
+
+
+def _seed_vacancies() -> None:
+    """Добавляет стартовые вакансии если таблица пустая."""
+    with _connect() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM vacancies").fetchone()[0]
+        if count > 0:
+            return
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        defaults = [
+            ("Повар",          "Oshpaz",          "👨‍🍳", 1, 0),
+            ("Официант",       "Ofitsiant",        "🤵",  1, 1),
+            ("Раннер",         "Yuguruvchi",       "🏃",  1, 2),
+            ("Бариста",        "Barista",          "☕️", 1, 3),
+            ("Тех. персонал",  "Texnik xodim",     "🧹",  1, 4),
+        ]
+        conn.executemany(
+            "INSERT INTO vacancies (name_ru, name_uz, emoji, is_active, sort_order, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [(r[0], r[1], r[2], r[3], r[4], now) for r in defaults],
+        )
+        logger.info("Вакансии по умолчанию добавлены.")
+
 
 def migrate_db() -> None:
     """Добавляет новые колонки если их нет — для существующих БД."""
@@ -71,6 +106,83 @@ def migrate_db() -> None:
         if "experience" not in existing:
             conn.execute("ALTER TABLE applications ADD COLUMN experience TEXT")
             logger.info("Миграция: добавлена колонка experience")
+
+        # Создаём таблицу вакансий если отсутствует (для старых инсталляций)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS vacancies (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                name_ru    TEXT NOT NULL,
+                name_uz    TEXT NOT NULL,
+                emoji      TEXT DEFAULT '',
+                is_active  INTEGER DEFAULT 1,
+                sort_order INTEGER DEFAULT 0,
+                created_at TEXT
+            )
+        """)
+    _seed_vacancies()
+
+
+# ── Вакансии ──────────────────────────────────────────────────────────────────
+
+def get_active_vacancies() -> list[dict]:
+    """Возвращает активные вакансии отсортированные по sort_order."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM vacancies WHERE is_active = 1 ORDER BY sort_order, id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_all_vacancies() -> list[dict]:
+    """Возвращает все вакансии (для панели администратора)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM vacancies ORDER BY sort_order, id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def add_vacancy(name_ru: str, name_uz: str, emoji: str = "") -> int:
+    """Добавляет новую вакансию, возвращает её id."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with _connect() as conn:
+        max_order = conn.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) FROM vacancies"
+        ).fetchone()[0]
+        cursor = conn.execute(
+            "INSERT INTO vacancies (name_ru, name_uz, emoji, is_active, sort_order, created_at) "
+            "VALUES (?, ?, ?, 1, ?, ?)",
+            (name_ru, name_uz, emoji, max_order + 1, now),
+        )
+        return cursor.lastrowid
+
+
+def toggle_vacancy(vacancy_id: int) -> bool:
+    """Переключает is_active вакансии. Возвращает новое состояние (True = активна)."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE vacancies SET is_active = 1 - is_active WHERE id = ?",
+            (vacancy_id,),
+        )
+        row = conn.execute(
+            "SELECT is_active FROM vacancies WHERE id = ?", (vacancy_id,)
+        ).fetchone()
+        return bool(row["is_active"]) if row else False
+
+
+def delete_vacancy(vacancy_id: int) -> None:
+    """Удаляет вакансию из БД."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM vacancies WHERE id = ?", (vacancy_id,))
+
+
+def get_vacancy_by_id(vacancy_id: int) -> dict | None:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM vacancies WHERE id = ?", (vacancy_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
 
 # ── Пользователи ──────────────────────────────────────────────────────────────
 
@@ -120,15 +232,11 @@ def get_all_user_ids() -> list[int]:
 # ── Чёрный список ─────────────────────────────────────────────────────────────
 
 def block_user(user_id: int, days: int = 30) -> None:
-    """Блокирует пользователя с автоматической датой разблокировки."""
-    now       = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now        = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     unblock_at = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
     with _connect() as conn:
         conn.execute(
-            """
-            INSERT OR REPLACE INTO blacklist (user_id, blocked_at, unblock_at)
-            VALUES (?, ?, ?)
-            """,
+            "INSERT OR REPLACE INTO blacklist (user_id, blocked_at, unblock_at) VALUES (?, ?, ?)",
             (user_id, now, unblock_at),
         )
 
@@ -137,10 +245,7 @@ def is_user_blocked(user_id: int) -> bool:
     try:
         with _connect() as conn:
             row = conn.execute(
-                """
-                SELECT 1 FROM blacklist
-                WHERE user_id = ? AND unblock_at > ?
-                """,
+                "SELECT 1 FROM blacklist WHERE user_id = ? AND unblock_at > ?",
                 (user_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
             ).fetchone()
             return row is not None
@@ -177,7 +282,6 @@ def save_application(
     position: str,
     experience: str = "—",
 ) -> int:
-    """Сохраняет анкету и возвращает её id."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with _connect() as conn:
         cursor = conn.execute(
@@ -191,17 +295,11 @@ def save_application(
         return cursor.lastrowid
 
 
-
-
 def get_application_status(user_id: int) -> str | None:
     try:
         with _connect() as conn:
             row = conn.execute(
-                """
-                SELECT status FROM applications
-                WHERE user_id = ?
-                ORDER BY created_at DESC LIMIT 1
-                """,
+                "SELECT status FROM applications WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
                 (user_id,),
             ).fetchone()
             return row["status"] if row else None
@@ -216,8 +314,7 @@ def update_application_status(user_id: int, status: str) -> None:
             """
             UPDATE applications SET status = ?
             WHERE id = (
-                SELECT id FROM applications
-                WHERE user_id = ?
+                SELECT id FROM applications WHERE user_id = ?
                 ORDER BY created_at DESC LIMIT 1
             )
             """,
@@ -269,8 +366,7 @@ def set_interview_time(user_id: int, interview_iso: str) -> None:
             """
             UPDATE applications SET interview_time = ?, reminder_sent = 0
             WHERE id = (
-                SELECT id FROM applications
-                WHERE user_id = ?
+                SELECT id FROM applications WHERE user_id = ?
                 ORDER BY created_at DESC LIMIT 1
             )
             """,
@@ -279,7 +375,6 @@ def set_interview_time(user_id: int, interview_iso: str) -> None:
 
 
 def get_pending_reminders() -> list[dict]:
-    """Анкеты где собеседование через ≤ 2 часа и напоминание ещё не отправлено."""
     now        = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     in_2_hours = (datetime.now() + timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
     try:
@@ -319,19 +414,14 @@ def increment_view_count(user_id: int) -> int:
             """
             UPDATE applications SET view_count = view_count + 1
             WHERE id = (
-                SELECT id FROM applications
-                WHERE user_id = ?
+                SELECT id FROM applications WHERE user_id = ?
                 ORDER BY created_at DESC LIMIT 1
             )
             """,
             (user_id,),
         )
         row = conn.execute(
-            """
-            SELECT view_count FROM applications
-            WHERE user_id = ?
-            ORDER BY created_at DESC LIMIT 1
-            """,
+            "SELECT view_count FROM applications WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
             (user_id,),
         ).fetchone()
         return row["view_count"] if row else 0
@@ -376,8 +466,7 @@ def save_hr_score(user_id: int, score: int, comment: str = "") -> None:
             """
             UPDATE applications SET hr_score = ?, hr_comment = ?
             WHERE id = (
-                SELECT id FROM applications
-                WHERE user_id = ?
+                SELECT id FROM applications WHERE user_id = ?
                 ORDER BY created_at DESC LIMIT 1
             )
             """,
@@ -479,7 +568,6 @@ def get_dashboard_stats() -> dict:
 
 
 def get_weekly_trend() -> list[dict]:
-    """Количество анкет за последние 7 дней — одним запросом."""
     week_ago = (datetime.now() - timedelta(days=6)).strftime("%Y-%m-%d")
     with _connect() as conn:
         rows = conn.execute(
@@ -493,7 +581,6 @@ def get_weekly_trend() -> list[dict]:
             (week_ago,),
         ).fetchall()
 
-    # Заполняем все 7 дней, даже если анкет не было
     counts_by_day = {r["day"]: r["count"] for r in rows}
     result = []
     for i in range(6, -1, -1):
@@ -523,14 +610,12 @@ def get_stats_by_position() -> list[dict]:
 # ── Видео-визитка HR ──────────────────────────────────────────────────────────
 
 def save_hr_video_msg_id(user_id: int, msg_id: int) -> None:
-    """Сохраняет message_id видео-визитки в HR-группе."""
     with _connect() as conn:
         conn.execute(
             """
             UPDATE applications SET hr_video_msg_id = ?
             WHERE id = (
-                SELECT id FROM applications
-                WHERE user_id = ?
+                SELECT id FROM applications WHERE user_id = ?
                 ORDER BY created_at DESC LIMIT 1
             )
             """,
@@ -539,7 +624,6 @@ def save_hr_video_msg_id(user_id: int, msg_id: int) -> None:
 
 
 def get_latest_application(user_id: int) -> dict | None:
-    """Возвращает последнюю анкету пользователя."""
     try:
         with _connect() as conn:
             row = conn.execute(
