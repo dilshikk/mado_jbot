@@ -26,6 +26,8 @@ _BROADCAST_DELAY = 0.05
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
+    # Сбрасываем зависшие состояния (например, брошенную на середине анкету)
+    await state.clear()
     if lang in ("ru", "uz"):
         await db.register_user(
             session,

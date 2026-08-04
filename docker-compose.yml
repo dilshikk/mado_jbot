@@ -9,6 +9,9 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql+asyncpg://mado:mado_password@postgres:5432/mado_db
+      # Код хранит и сравнивает даты через datetime.now() — без TZ контейнер работает в UTC,
+      # напоминания о собеседованиях сработали бы на 5 часов позже
+      TZ: Asia/Tashkent
     volumes:
       - ./logs:/app/logs
       - ./credentials.json:/app/credentials.json:ro
@@ -24,6 +27,7 @@ services:
       POSTGRES_USER: mado
       POSTGRES_PASSWORD: mado_password
       POSTGRES_DB: mado_db
+      TZ: Asia/Tashkent
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:

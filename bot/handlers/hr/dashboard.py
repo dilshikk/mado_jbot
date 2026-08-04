@@ -130,6 +130,7 @@ async def resend_candidate_card(message: Message, session: AsyncSession) -> None
         "name": app.get("name"), "birthday": app.get("birthday"), "phone": app.get("phone"),
         "position": app.get("position"), "branch": "MADO (Tashkent City Mall)",
         "gender": "—", "family": "—", "citizenship": "—", "address": "—",
+        "experience": app.get("experience") or "—",
     }
     resume_text = build_hr_resume_text(data, candidate_id, username_raw)
     hr_keyboard = kb.get_hr_action_keyboard(phone=app.get("phone", ""), username=username_raw, candidate_id=candidate_id)
