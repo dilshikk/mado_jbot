@@ -2,6 +2,8 @@
 """Alembic environment — поддерживает async SQLAlchemy + автогенерацию."""
 
 import asyncio
+import sys
+from pathlib import Path
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -9,9 +11,15 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 
-# ── Загружаем настройки из .env через наш config ─────────────────────────────
+# ── Добавляем корень проекта в sys.path, чтобы работал import bot ─────────────
+# alembic/env.py → alembic/ → project root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# ── Загружаем .env ────────────────────────────────────────────────────────────
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(PROJECT_ROOT / ".env")
 
 from bot.core.config import settings  # noqa: E402
 
@@ -31,7 +39,7 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
-# ── Offline mode (без соединения с БД — генерирует SQL) ──────────────────────
+# ── Offline mode ──────────────────────────────────────────────────────────────
 
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
@@ -40,13 +48,13 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        render_as_batch=True,  # SQLite не поддерживает ALTER TABLE без batch
+        render_as_batch=True,
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
-# ── Online mode (реальное соединение) ─────────────────────────────────────────
+# ── Online mode ───────────────────────────────────────────────────────────────
 
 def do_run_migrations(connection) -> None:
     context.configure(
