@@ -5,33 +5,24 @@ import logging
 from contextlib import suppress
 
 from aiogram import F, Router
-from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError, TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery, InlineKeyboardButton,
     InlineKeyboardMarkup, Message, PhotoSize,
 )
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db import database as db
-from config import ADMIN_IDS
-from bot.utils.network import safe_call
+from bot.core.config import ADMIN_IDS
+from bot.db import requests as db
+from bot.states import Broadcast
 
 router = Router()
 logger = logging.getLogger(__name__)
 
 _BROADCAST_DELAY   = 0.05
 _PROGRESS_INTERVAL = 25
-
-
-class Broadcast(StatesGroup):
-    waiting_photo     = State()
-    waiting_caption   = State()
-    waiting_url       = State()
-    waiting_url_title = State()
-    preview           = State()
-    sending           = State()
 
 
 def _is_admin(user_id: int) -> bool:
@@ -57,7 +48,9 @@ def _preview_keyboard(has_url: bool) -> InlineKeyboardMarkup:
 def _url_keyboard(url: str | None, title: str) -> InlineKeyboardMarkup | None:
     if not url:
         return None
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=title or "🔗 Подробнее", url=url)]])
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=title or "🔗 Подробнее", url=url)
+    ]])
 
 
 @router.message(Command("admin"))
@@ -73,7 +66,9 @@ async def cmd_admin(message: Message, state: FSMContext) -> None:
         f"Или нажмите кнопку, чтобы пропустить.\n\n"
         f"<i>Доступ: {len(ADMIN_IDS)} администратор(ов)</i>",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⏭ Без фото", callback_data="broadcast:skip_photo")]]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="⏭ Без фото", callback_data="broadcast:skip_photo")
+        ]]),
     )
 
 
@@ -124,7 +119,9 @@ async def broadcast_got_caption(message: Message, state: FSMContext) -> None:
     await message.answer(
         "<b>Шаг 3/4.</b> Отправьте URL-ссылку.\nИли пропустите.",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⏭ Без ссылки", callback_data="broadcast:skip_url")]]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="⏭ Без ссылки", callback_data="broadcast:skip_url")
+        ]]),
     )
 
 
@@ -166,16 +163,19 @@ async def broadcast_got_url_title(message: Message, state: FSMContext) -> None:
     await _show_preview(message, state)
 
 
-async def _show_preview(message: Message, state: FSMContext) -> None:
+async def _show_preview(message: Message, state: FSMContext, session: AsyncSession | None = None) -> None:
     data      = await state.get_data()
     photo_id  = data.get("photo_file_id")
     caption   = data.get("caption", "")
     url       = data.get("url")
     url_title = data.get("url_title", "🔗 Подробнее")
     url_kb    = _url_keyboard(url, url_title)
-    count     = len(db.get_all_user_ids())
+    count     = len(await db.get_all_user_ids(session)) if session else 0
     await state.set_state(Broadcast.preview)
-    await message.answer(f"👁 <b>Предпросмотр рассылки</b>\n👥 Получателей: <b>{count}</b>\n{'─'*28}", parse_mode="HTML")
+    await message.answer(
+        f"👁 <b>Предпросмотр рассылки</b>\n👥 Получателей: <b>{count}</b>\n{'─'*28}",
+        parse_mode="HTML",
+    )
     if photo_id:
         await message.answer_photo(photo=photo_id, caption=caption, parse_mode="HTML", reply_markup=url_kb)
     else:
@@ -214,28 +214,37 @@ async def broadcast_cancel(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data == "broadcast:send", Broadcast.preview)
-async def broadcast_send(callback: CallbackQuery, state: FSMContext) -> None:
+async def broadcast_send(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer("⛔️ Нет доступа.", show_alert=True)
         return
-    data      = await state.get_data()
+    data = await state.get_data()
     await state.set_state(Broadcast.sending)
     await callback.answer("🚀 Запускаю рассылку...")
+
     photo_id  = data.get("photo_file_id")
     caption   = data.get("caption", "")
     url       = data.get("url")
     url_title = data.get("url_title", "🔗 Подробнее")
     url_kb    = _url_keyboard(url, url_title)
-    user_ids  = db.get_all_user_ids()
-    total     = len(user_ids)
+
+    user_ids = await db.get_all_user_ids(session)
+    total    = len(user_ids)
     sent = failed = blocked = 0
     progress_msg = await callback.message.answer(f"📤 Отправляю... 0 / {total}")
+
     for i, user_id in enumerate(user_ids, 1):
         try:
             if photo_id:
-                await callback.bot.send_photo(chat_id=user_id, photo=photo_id, caption=caption, parse_mode="HTML", reply_markup=url_kb)
+                await callback.bot.send_photo(
+                    chat_id=user_id, photo=photo_id,
+                    caption=caption, parse_mode="HTML", reply_markup=url_kb,
+                )
             else:
-                await callback.bot.send_message(chat_id=user_id, text=caption, parse_mode="HTML", reply_markup=url_kb)
+                await callback.bot.send_message(
+                    chat_id=user_id, text=caption,
+                    parse_mode="HTML", reply_markup=url_kb,
+                )
             sent += 1
         except TelegramForbiddenError:
             blocked += 1
@@ -252,6 +261,7 @@ async def broadcast_send(callback: CallbackQuery, state: FSMContext) -> None:
             with suppress(TelegramAPIError):
                 await progress_msg.edit_text(f"📤 Отправляю... {i} / {total}\n✅ {sent}  ❌ {failed}  🚫 {blocked}")
         await asyncio.sleep(_BROADCAST_DELAY)
+
     no_errors = failed == 0 and blocked == 0
     await progress_msg.edit_text(
         f"📊 <b>Рассылка завершена</b>\n{'─'*28}\n"

@@ -5,11 +5,12 @@ import logging
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db import database as db
-from config import ADMIN_IDS
+from bot.core.config import ADMIN_IDS
+from bot.db import requests as db
+from bot.states import AddVacancy
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -17,12 +18,6 @@ logger = logging.getLogger(__name__)
 
 def _is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
-
-
-class AddVacancy(StatesGroup):
-    waiting_name_ru = State()
-    waiting_name_uz = State()
-    waiting_emoji   = State()
 
 
 def _vacancies_keyboard(vacancies: list[dict]) -> InlineKeyboardMarkup:
@@ -58,47 +53,47 @@ def _vacancy_list_text(vacancies: list[dict]) -> str:
 
 
 @router.message(Command("vacancies"))
-async def cmd_vacancies(message: Message) -> None:
+async def cmd_vacancies(message: Message, session: AsyncSession) -> None:
     if not _is_admin(message.from_user.id):
         return
-    vacancies = db.get_all_vacancies()
+    vacancies = await db.get_all_vacancies(session)
     await message.answer(_vacancy_list_text(vacancies), parse_mode="HTML", reply_markup=_vacancies_keyboard(vacancies))
 
 
 @router.callback_query(F.data == "vac:refresh")
-async def vac_refresh(callback: CallbackQuery, state: FSMContext) -> None:
+async def vac_refresh(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer()
         return
     await state.clear()
-    vacancies = db.get_all_vacancies()
+    vacancies = await db.get_all_vacancies(session)
     await callback.message.edit_text(_vacancy_list_text(vacancies), parse_mode="HTML", reply_markup=_vacancies_keyboard(vacancies))
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("vac:toggle:"))
-async def vac_toggle(callback: CallbackQuery) -> None:
+async def vac_toggle(callback: CallbackQuery, session: AsyncSession) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer()
         return
     vacancy_id = int(callback.data.split(":")[2])
-    is_active  = db.toggle_vacancy(vacancy_id)
-    vacancy    = db.get_vacancy_by_id(vacancy_id)
+    is_active  = await db.toggle_vacancy(session, vacancy_id)
+    vacancy    = await db.get_vacancy_by_id(session, vacancy_id)
     name       = f"{vacancy['emoji']} {vacancy['name_ru']}".strip() if vacancy else f"#{vacancy_id}"
     status_text = "включена ✅" if is_active else "отключена ❌"
     await callback.answer(f"Вакансия «{name}» {status_text}")
     logger.info("Вакансия id=%d %s", vacancy_id, status_text)
-    vacancies = db.get_all_vacancies()
+    vacancies = await db.get_all_vacancies(session)
     await callback.message.edit_text(_vacancy_list_text(vacancies), parse_mode="HTML", reply_markup=_vacancies_keyboard(vacancies))
 
 
 @router.callback_query(F.data.startswith("vac:delete:"))
-async def vac_delete_prompt(callback: CallbackQuery) -> None:
+async def vac_delete_prompt(callback: CallbackQuery, session: AsyncSession) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer()
         return
     vacancy_id = int(callback.data.split(":")[2])
-    vacancy    = db.get_vacancy_by_id(vacancy_id)
+    vacancy    = await db.get_vacancy_by_id(session, vacancy_id)
     if not vacancy:
         await callback.answer("Вакансия не найдена.", show_alert=True)
         return
@@ -112,17 +107,17 @@ async def vac_delete_prompt(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("vac:delete_confirm:"))
-async def vac_delete_confirm(callback: CallbackQuery) -> None:
+async def vac_delete_confirm(callback: CallbackQuery, session: AsyncSession) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer()
         return
     vacancy_id = int(callback.data.split(":")[2])
-    vacancy    = db.get_vacancy_by_id(vacancy_id)
+    vacancy    = await db.get_vacancy_by_id(session, vacancy_id)
     name       = f"{vacancy['emoji']} {vacancy['name_ru']}".strip() if vacancy else f"#{vacancy_id}"
-    db.delete_vacancy(vacancy_id)
+    await db.delete_vacancy(session, vacancy_id)
     logger.info("Вакансия id=%d «%s» удалена", vacancy_id, name)
     await callback.answer(f"Вакансия «{name}» удалена.", show_alert=True)
-    vacancies = db.get_all_vacancies()
+    vacancies = await db.get_all_vacancies(session)
     await callback.message.edit_text(_vacancy_list_text(vacancies), parse_mode="HTML", reply_markup=_vacancies_keyboard(vacancies))
 
 
@@ -166,24 +161,24 @@ async def vac_got_name_uz(message: Message, state: FSMContext) -> None:
 
 
 @router.message(AddVacancy.waiting_emoji, F.text == "/skip")
-async def vac_skip_emoji(message: Message, state: FSMContext) -> None:
+async def vac_skip_emoji(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if not _is_admin(message.from_user.id):
         return
-    await _save_new_vacancy(message, state, emoji="")
+    await _save_new_vacancy(message, state, session, emoji="")
 
 
 @router.message(AddVacancy.waiting_emoji)
-async def vac_got_emoji(message: Message, state: FSMContext) -> None:
+async def vac_got_emoji(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if not _is_admin(message.from_user.id):
         return
-    await _save_new_vacancy(message, state, emoji=(message.text or "").strip())
+    await _save_new_vacancy(message, state, session, emoji=(message.text or "").strip())
 
 
-async def _save_new_vacancy(message: Message, state: FSMContext, emoji: str) -> None:
+async def _save_new_vacancy(message: Message, state: FSMContext, session: AsyncSession, emoji: str) -> None:
     data       = await state.get_data()
     name_ru    = data["name_ru"]
     name_uz    = data["name_uz"]
-    vacancy_id = db.add_vacancy(name_ru, name_uz, emoji)
+    vacancy_id = await db.add_vacancy(session, name_ru, name_uz, emoji)
     logger.info("Добавлена вакансия id=%d: %s / %s", vacancy_id, name_ru, name_uz)
     await state.clear()
     label = f"{emoji} {name_ru}".strip()

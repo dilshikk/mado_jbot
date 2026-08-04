@@ -8,13 +8,14 @@ from datetime import datetime
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db import database as db
-from bot import keyboards as kb
-from config import ADMIN_CHAT_ID, ADMIN_IDS
+from bot.core.config import ADMIN_CHAT_ID, ADMIN_IDS
+from bot.db import requests as db
 from bot.filters.common import IsCancelMessage, IsPrivateChat
+from bot import keyboards as kb
+from bot.lexicon import LOCALIZATION
 from bot.services.gsheets import append_to_sheet
-from bot.messages import LOCALIZATION
 from bot.states import Form
 from bot.utils.formatters import build_hr_resume_text, build_resume_text
 
@@ -29,13 +30,12 @@ EXPERIENCE_OPTIONS_RU = {"Нет опыта", "Менее 1 года", "1–2 г
 EXPERIENCE_OPTIONS_UZ = {"Tajriba yo'q", "1 yildan kam", "1–2 yil", "3–5 yil", "5+ yil"}
 
 
-def _get_valid_position_labels() -> set[str]:
-    vacancies = db.get_active_vacancies()
+def _valid_position_labels(vacancies: list[dict]) -> set[str]:
     labels: set[str] = set()
     for v in vacancies:
         for key in ("name_ru", "name_uz"):
-            name  = v.get(key, "").strip()
-            emoji = v.get("emoji", "").strip()
+            name  = (v.get(key) or "").strip()
+            emoji = (v.get("emoji") or "").strip()
             if name:
                 labels.add(f"{emoji} {name}".strip())
                 labels.add(name)
@@ -61,11 +61,13 @@ async def cancel_form(message: Message, state: FSMContext, lang: str) -> None:
 
 
 @router.message(F.text.in_(["📝 Заполнить анкету", "📝 Anketani to'ldirish"]))
-async def start_anketa(message: Message, state: FSMContext, lang: str) -> None:
-    if db.is_user_blocked(message.from_user.id):
+async def start_anketa(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
+    if await db.is_user_blocked(session, message.from_user.id):
         await message.answer(LOCALIZATION[lang]["user_blocked_text"], parse_mode="HTML")
         return
-    if not db.get_active_vacancies():
+
+    vacancies = await db.get_active_vacancies(session)
+    if not vacancies:
         await message.answer(
             "⏳ <b>В данный момент открытых вакансий нет.</b>\n\nСледите за обновлениями!"
             if lang == "ru" else
@@ -73,7 +75,8 @@ async def start_anketa(message: Message, state: FSMContext, lang: str) -> None:
             parse_mode="HTML",
         )
         return
-    status = db.get_application_status(message.from_user.id)
+
+    status = await db.get_application_status(session, message.from_user.id)
     if status == "hired":
         await message.answer("🏆 <b>Вы уже являетесь сотрудником MADO!</b>" if lang == "ru" else "🏆 <b>Siz allaqachon MADO xodimisiniz!</b>", parse_mode="HTML")
         return
@@ -83,25 +86,36 @@ async def start_anketa(message: Message, state: FSMContext, lang: str) -> None:
     if status == "pending":
         await message.answer("⏳ <b>Ваша анкета уже на рассмотрении.</b>" if lang == "ru" else "⏳ <b>Arizangiz allaqachon ko'rib chiqilmoqda.</b>", parse_mode="HTML")
         return
+
     await message.answer(LOCALIZATION[lang]["ask_branch"], reply_markup=kb.get_branch_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_branch)
 
 
 @router.message(Form.waiting_branch)
-async def process_branch(message: Message, state: FSMContext, lang: str) -> None:
+async def process_branch(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
     if VALID_BRANCH not in (message.text or ""):
         return
     await state.update_data(branch=message.text)
-    await message.answer(LOCALIZATION[lang]["ask_position"], reply_markup=kb.get_positions_keyboard(lang), parse_mode="HTML")
+    vacancies = await db.get_active_vacancies(session)
+    await message.answer(
+        LOCALIZATION[lang]["ask_position"],
+        reply_markup=kb.get_positions_keyboard(lang, vacancies),
+        parse_mode="HTML",
+    )
     await state.set_state(Form.waiting_position)
 
 
 @router.message(Form.waiting_position)
-async def process_position(message: Message, state: FSMContext, lang: str) -> None:
-    valid  = _get_valid_position_labels()
-    chosen = (message.text or "").strip()
+async def process_position(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
+    vacancies = await db.get_active_vacancies(session)
+    valid     = _valid_position_labels(vacancies)
+    chosen    = (message.text or "").strip()
     if chosen not in valid:
-        await message.answer(LOCALIZATION[lang]["ask_position"], reply_markup=kb.get_positions_keyboard(lang), parse_mode="HTML")
+        await message.answer(
+            LOCALIZATION[lang]["ask_position"],
+            reply_markup=kb.get_positions_keyboard(lang, vacancies),
+            parse_mode="HTML",
+        )
         return
     await state.update_data(position=chosen)
     await message.answer(LOCALIZATION[lang]["ask_name"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
@@ -132,7 +146,10 @@ async def process_birthday(message: Message, state: FSMContext, lang: str) -> No
         await message.answer(LOCALIZATION[lang]["bad_birthday"], parse_mode="HTML")
         return
     if not (18 <= age <= 60):
-        await message.answer("Возраст должен быть от <b>18 до 60 лет</b>." if lang == "ru" else "Yosh <b>18 dan 60 yoshgacha</b> bo'lishi kerak.", parse_mode="HTML")
+        await message.answer(
+            "Возраст должен быть от <b>18 до 60 лет</b>." if lang == "ru" else "Yosh <b>18 dan 60 yoshgacha</b> bo'lishi kerak.",
+            parse_mode="HTML",
+        )
         return
     await state.update_data(birthday=text)
     await message.answer(LOCALIZATION[lang]["ask_gender"], reply_markup=kb.get_gender_keyboard(lang), parse_mode="HTML")
@@ -191,7 +208,10 @@ async def process_experience(message: Message, state: FSMContext, lang: str) -> 
 async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
     phone = message.contact.phone_number if message.contact else (message.text or "").strip()
     if not message.contact and not re.match(r"^\+?\d{7,15}$", phone):
-        await message.answer("Введите корректный номер: <code>+998901234567</code>" if lang == "ru" else "To'g'ri raqam kiriting: <code>+998901234567</code>", parse_mode="HTML")
+        await message.answer(
+            "Введите корректный номер: <code>+998901234567</code>" if lang == "ru" else "To'g'ri raqam kiriting: <code>+998901234567</code>",
+            parse_mode="HTML",
+        )
         return
     await state.update_data(phone=phone)
     ask_video = (
@@ -210,10 +230,18 @@ async def process_video(message: Message, state: FSMContext, lang: str) -> None:
     elif message.video:
         duration, file_id, is_note = message.video.duration, message.video.file_id, False
     else:
-        await message.answer("Отправьте <b>видео-сообщение</b> или кружок." if lang == "ru" else "<b>Video-xabar</b> yoki dumaloq video yuboring.", parse_mode="HTML")
+        await message.answer(
+            "Отправьте <b>видео-сообщение</b> или кружок." if lang == "ru" else "<b>Video-xabar</b> yoki dumaloq video yuboring.",
+            parse_mode="HTML",
+        )
         return
     if duration < MIN_VIDEO_DURATION:
-        await message.answer(f"Видео слишком короткое ({duration} сек). Нужно <b>≥{MIN_VIDEO_DURATION} сек</b>." if lang == "ru" else f"Video qisqa ({duration}s). <b>≥{MIN_VIDEO_DURATION}s</b> kerak.", parse_mode="HTML")
+        await message.answer(
+            f"Видео слишком короткое ({duration} сек). Нужно <b>≥{MIN_VIDEO_DURATION} сек</b>."
+            if lang == "ru" else
+            f"Video qisqa ({duration}s). <b>≥{MIN_VIDEO_DURATION}s</b> kerak.",
+            parse_mode="HTML",
+        )
         return
     await state.update_data(video_file_id=file_id, is_video_note=is_note, video_duration=duration)
     data    = await state.get_data()
@@ -223,34 +251,58 @@ async def process_video(message: Message, state: FSMContext, lang: str) -> None:
 
 
 @router.message(Form.waiting_confirmation)
-async def process_confirmation(message: Message, state: FSMContext, lang: str) -> None:
+async def process_confirmation(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
     data = await state.get_data()
+
     if message.text in {LOCALIZATION["ru"]["confirm_btn_no"], LOCALIZATION["uz"]["confirm_btn_no"]}:
         await state.clear()
         await state.update_data(lang=lang)
-        await start_anketa(message, state, lang)
+        await start_anketa(message, state, lang, session)
         return
+
     if message.text not in {LOCALIZATION["ru"]["confirm_btn_yes"], LOCALIZATION["uz"]["confirm_btn_yes"]}:
         return
+
     now_str      = datetime.now().strftime("%d.%m.%Y %H:%M")
     user         = message.from_user
     username_raw = user.username or LOCALIZATION["ru"]["none_text"]
     bot: Bot     = message.bot
-    db.save_application(user_id=user.id, name=data.get("name"), birthday=data.get("birthday"), phone=data.get("phone"), position=data.get("position"), experience=data.get("experience", "—"))
+
+    await db.save_application(
+        session,
+        user_id=user.id,
+        name=data.get("name"),
+        birthday=data.get("birthday"),
+        phone=data.get("phone"),
+        position=data.get("position"),
+        experience=data.get("experience", "—"),
+    )
+
     resume_text = build_hr_resume_text(data, user.id, username_raw)
     hr_keyboard = kb.get_hr_action_keyboard(phone=data.get("phone"), username=username_raw, candidate_id=user.id)
     await bot.send_message(chat_id=ADMIN_CHAT_ID, text=resume_text, reply_markup=hr_keyboard, parse_mode="HTML")
+
     video_file_id = data.get("video_file_id")
     if video_file_id:
         try:
             if data.get("is_video_note"):
                 video_msg = await bot.send_video_note(chat_id=ADMIN_CHAT_ID, video_note=video_file_id)
             else:
-                video_msg = await bot.send_video(chat_id=ADMIN_CHAT_ID, video=video_file_id, caption=f"🎥 {data.get('name')} (@{username_raw})")
-            db.save_hr_video_msg_id(user.id, video_msg.message_id)
+                video_msg = await bot.send_video(
+                    chat_id=ADMIN_CHAT_ID,
+                    video=video_file_id,
+                    caption=f"🎥 {data.get('name')} (@{username_raw})",
+                )
+            await db.save_hr_video_msg_id(session, user.id, video_msg.message_id)
         except Exception as e:
             logger.error("Ошибка отправки видео HR: %s", e, exc_info=True)
-    row_data = [now_str, data.get("branch"), data.get("position"), data.get("name"), data.get("birthday"), data.get("gender"), data.get("family"), data.get("citizenship"), data.get("address"), data.get("experience", "—"), data.get("phone")]
+
+    row_data = [
+        now_str, data.get("branch"), data.get("position"), data.get("name"),
+        data.get("birthday"), data.get("gender"), data.get("family"),
+        data.get("citizenship"), data.get("address"), data.get("experience", "—"),
+        data.get("phone"),
+    ]
     try:
         success = await asyncio.to_thread(append_to_sheet, row_data)
         if not success:
@@ -267,6 +319,7 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str) -
                 await bot.send_message(chat_id=admin_id, text=error_text, parse_mode="HTML")
             except Exception as notify_err:
                 logger.error("Не удалось уведомить admin_id=%d: %s", admin_id, notify_err)
+
     await message.answer(LOCALIZATION[lang]["anketa_done"], reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
     await state.clear()
     await state.update_data(lang=lang)

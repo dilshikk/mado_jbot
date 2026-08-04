@@ -2,119 +2,30 @@ import asyncio
 import logging
 import signal
 from contextlib import suppress
-from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
-from aiogram.filters import StateFilter
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from aiogram_sqlite_storage.sqlitestore import SQLStorage
-
-from config import BOT_TOKEN, ADMIN_CHAT_ID, LOG_PATH, LOG_LEVEL
-from bot.handlers.admin import broadcast as admin_broadcast
-from bot.handlers.admin import vacancies as admin_vacancies
-from bot.handlers.user import form
-from bot.handlers.user import subscription
-from bot.handlers.user import common as user
-from bot.handlers.hr import actions as hr
-from bot.handlers.hr import dashboard as hr_dashboard
-from bot.messages import LOCALIZATION
-from bot.middlewares.lang import LangMiddleware
-from bot.middlewares.rate_limit import RateLimitMiddleware
-from bot.middlewares.subscription import SubscriptionMiddleware
-from bot.services.scheduler import auto_unblock_users, notify_stale_applications, send_interview_reminders
-from bot.db import database as db
-
-logging.basicConfig(
-    level=LOG_LEVEL,
-    format="%(asctime)s | %(levelname)s | %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[
-        logging.StreamHandler(),             # stdout → journald
-        logging.FileHandler(LOG_PATH),       # путь из .env (LOG_PATH)
-    ],
+from bot.core.config import ADMIN_CHAT_ID, settings
+from bot.core.loader import create_bot, create_dispatcher, create_storage
+from bot.db.base import engine, init_db
+from bot.services.scheduler import (
+    auto_unblock_users,
+    notify_stale_applications,
+    send_interview_reminders,
 )
-
-# Подавляем слишком подробные логи сторонних библиотек
-# на уровнях выше DEBUG, чтобы не засорять файл в production
-if LOG_LEVEL > logging.DEBUG:
-    logging.getLogger("aiogram").setLevel(logging.WARNING)
-    logging.getLogger("apscheduler").setLevel(logging.WARNING)
-    logging.getLogger("gspread").setLevel(logging.WARNING)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+from bot.utils.logger import setup_logging
 
 logger = logging.getLogger(__name__)
-logger.info("Логирование запущено: уровень=%s, файл=%s", logging.getLevelName(LOG_LEVEL), LOG_PATH)
-
-BASE_DIR = Path(__file__).parent
-FSM_STORAGE_PATH = str(BASE_DIR / "fsm_storage.db")
-
-
-async def _delete_after(message: Message, delay: int) -> None:
-    await asyncio.sleep(delay)
-    with suppress(TelegramAPIError):
-        await message.delete()
-
-
-async def handle_group_messages(message: Message) -> None:
-    if not (message.text and message.text.startswith("/start")):
-        return
-    with suppress(TelegramAPIError):
-        bot_info = await message.bot.get_me()
-        kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(
-                text=LOCALIZATION["ru"]["btn_redirect_pm"],
-                url=f"https://t.me/{bot_info.username}?start=true",
-            )
-        ]])
-        sent = await message.reply(
-            LOCALIZATION["ru"]["group_protection_text"],
-            reply_markup=kb,
-            parse_mode="HTML",
-        )
-        asyncio.create_task(_delete_after(sent, delay=15))
-        asyncio.create_task(_delete_after(message, delay=15))
-
-
-def create_dispatcher(storage: SQLStorage) -> Dispatcher:
-    dp = Dispatcher(storage=storage)
-
-    # Rate limiting — первым, чтобы отсекать спам до остальной логики
-    dp.message.outer_middleware(RateLimitMiddleware())
-    dp.callback_query.outer_middleware(RateLimitMiddleware())
-
-    dp.message.middleware(LangMiddleware())
-    dp.message.outer_middleware(SubscriptionMiddleware())
-    dp.callback_query.outer_middleware(SubscriptionMiddleware())
-
-    dp.include_router(subscription.router)
-    dp.include_router(hr.router)
-    dp.include_router(hr_dashboard.router)
-    dp.include_router(admin_broadcast.router)
-    dp.include_router(admin_vacancies.router)
-    dp.include_router(user.router)
-    dp.include_router(form.router)
-
-    dp.message.register(
-        handle_group_messages,
-        F.chat.type.in_({"group", "supergroup"}),
-        StateFilter(None),
-    )
-
-    return dp
 
 
 async def on_startup(bot: Bot) -> None:
-    db.init_db()
-    db.migrate_db()
+    await init_db()
     logger.info("БД инициализирована.")
     with suppress(TelegramAPIError):
         await bot.send_message(
@@ -137,9 +48,11 @@ async def on_shutdown(bot: Bot) -> None:
 
 
 async def main() -> None:
-    bot = Bot(token=BOT_TOKEN)
-    storage = SQLStorage(FSM_STORAGE_PATH)
-    dp = create_dispatcher(storage)
+    setup_logging(settings.log_path, settings.log_level_int)
+
+    bot     = create_bot()
+    storage = create_storage()
+    dp      = create_dispatcher(storage)
 
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
@@ -160,6 +73,8 @@ async def main() -> None:
         scheduler.shutdown(wait=False)
         with suppress(Exception):
             await storage.close()
+        with suppress(Exception):
+            await engine.dispose()
         with suppress(Exception):
             await bot.session.close()
 

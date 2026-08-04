@@ -10,17 +10,18 @@ from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     BufferedInputFile, CallbackQuery, InlineKeyboardButton,
     InlineKeyboardMarkup, Message,
 )
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db import database as db
+from bot.core.config import ADMIN_CHAT_ID, ADMIN_IDS
+from bot.db import requests as db
 from bot import keyboards as kb
-from bot.messages import LOCALIZATION
+from bot.lexicon import LOCALIZATION
+from bot.states import DashboardFilter
 from bot.utils.formatters import build_hr_resume_text
-from config import ADMIN_IDS, ADMIN_CHAT_ID
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -31,11 +32,6 @@ _STATUS_ICON: dict[str, str] = {
     "rejected": "❌",
     "hold":     "⏸",
 }
-
-
-class DashboardFilter(StatesGroup):
-    waiting_position_filter = State()
-    waiting_date_from       = State()
 
 
 def _is_admin(user_id: int) -> bool:
@@ -65,24 +61,33 @@ def _dashboard_keyboard() -> InlineKeyboardMarkup:
 
 
 def _back_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="◀️ Назад", callback_data="dash:refresh")]])
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="◀️ Назад", callback_data="dash:refresh")
+    ]])
 
 
-async def _send_dashboard(message: Message) -> None:
-    stats  = db.get_dashboard_stats()
-    trends = db.get_weekly_trend()
-    scores = db.get_score_stats()
+async def _send_dashboard(message: Message, session: AsyncSession) -> None:
+    stats  = await db.get_dashboard_stats(session)
+    trends = await db.get_weekly_trend(session)
+    scores = await db.get_score_stats(session)
+
     trend_lines = []
     for day in trends:
         bar = "█" * min(day["count"], 10)
         if day["count"] > 10:
             bar += f"({day['count']})"
         trend_lines.append(f"  {day['label']}: {bar or '—'}")
-    trend_text    = "\n".join(trend_lines) or "  нет данных"
-    top_positions = "\n".join(f"  {i+1}. {p['position']} — {p['count']} чел." for i, p in enumerate(stats["top_positions"][:3])) or "  нет данных"
+    trend_text = "\n".join(trend_lines) or "  нет данных"
+
+    top_positions = "\n".join(
+        f"  {i+1}. {p['position']} — {p['count']} чел."
+        for i, p in enumerate(stats["top_positions"][:3])
+    ) or "  нет данных"
+
     avg_score     = scores.get("avg_score") or 0.0
     score_bar     = ("⭐️" * round(avg_score) + "☆" * (5 - round(avg_score))) if avg_score else "—"
     avg_score_str = f"{avg_score}/5" if avg_score else "нет оценок"
+
     text = (
         f"📊 <b>HR Dashboard — MADO</b>\n<i>Обновлено: {datetime.now().strftime('%d.%m.%Y %H:%M')}</i>\n{'─'*30}\n\n"
         f"👥 <b>Пользователи</b>\n  Всего:            <b>{stats['total_users']}</b>\n  Новых сегодня:    <b>{stats['new_today']}</b>\n  Новых за неделю:  <b>{stats['new_week']}</b>\n\n"
@@ -96,14 +101,14 @@ async def _send_dashboard(message: Message) -> None:
 
 
 @router.message(Command("dashboard"))
-async def cmd_dashboard(message: Message) -> None:
+async def cmd_dashboard(message: Message, session: AsyncSession) -> None:
     if not _is_admin(message.from_user.id):
         return
-    await _send_dashboard(message)
+    await _send_dashboard(message, session)
 
 
 @router.message(F.text.startswith("/resend"))
-async def resend_candidate_card(message: Message) -> None:
+async def resend_candidate_card(message: Message, session: AsyncSession) -> None:
     if message.from_user.id not in ADMIN_IDS:
         return
     parts = message.text.strip().split()
@@ -112,7 +117,7 @@ async def resend_candidate_card(message: Message) -> None:
         return
     candidate_id = int(parts[1])
     bot: Bot     = message.bot
-    app          = db.get_latest_application(candidate_id)
+    app          = await db.get_latest_application(session, candidate_id)
     if not app:
         await message.answer(f"❌ Анкета для user_id={candidate_id} не найдена.")
         return
@@ -133,16 +138,16 @@ async def resend_candidate_card(message: Message) -> None:
 
 
 @router.callback_query(F.data.startswith("dash:list:"))
-async def dashboard_list(callback: CallbackQuery) -> None:
+async def dashboard_list(callback: CallbackQuery, session: AsyncSession) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer()
         return
     filter_key = callback.data.split(":")[2]
     if filter_key == "today":
-        apps  = db.get_applications_today()
+        apps  = await db.get_applications_today(session)
         title = "📅 Анкеты за сегодня"
     else:
-        apps  = db.get_applications_by_status(filter_key)
+        apps  = await db.get_applications_by_status(session, filter_key)
         title = {"pending": "⏳ На рассмотрении", "accepted": "✅ Одобренные", "rejected": "❌ Отклонённые"}.get(filter_key, "📋 Анкеты")
     if not apps:
         await callback.answer("Нет данных по этому фильтру.", show_alert=True)
@@ -160,11 +165,11 @@ async def dashboard_list(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data == "dash:positions")
-async def dashboard_positions(callback: CallbackQuery) -> None:
+async def dashboard_positions(callback: CallbackQuery, session: AsyncSession) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer()
         return
-    data = db.get_stats_by_position()
+    data = await db.get_stats_by_position(session)
     if not data:
         await callback.answer("Нет данных.", show_alert=True)
         return
@@ -182,11 +187,11 @@ async def dashboard_positions(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data == "dash:scores")
-async def dashboard_scores(callback: CallbackQuery) -> None:
+async def dashboard_scores(callback: CallbackQuery, session: AsyncSession) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer()
         return
-    data = db.get_detailed_score_stats()
+    data = await db.get_detailed_score_stats(session)
     if not data["scored_count"]:
         await callback.answer("Оценок пока нет.", show_alert=True)
         return
@@ -195,7 +200,10 @@ async def dashboard_scores(callback: CallbackQuery) -> None:
         count   = data["distribution"].get(star, 0)
         bar_len = round(count / data["scored_count"] * 10) if data["scored_count"] else 0
         dist_lines.append(f"  {'⭐'*star}: {'▓'*bar_len}{'░'*(10-bar_len)} {count}")
-    top_comments = "\n".join(f"  • {c['name']} ({c['hr_score']}⭐): {c['hr_comment']}" for c in data["top_comments"][:3]) or "  нет комментариев"
+    top_comments = "\n".join(
+        f"  • {c['name']} ({c['hr_score']}⭐): {c['hr_comment']}"
+        for c in data["top_comments"][:3]
+    ) or "  нет комментариев"
     text = (
         f"⭐️ <b>Детальная статистика оценок</b>\n{'─'*28}\n\n"
         f"Оценено: <b>{data['scored_count']}</b>\nСредняя: <b>{data['avg_score']}/5</b>\n\n"
@@ -218,13 +226,13 @@ async def dashboard_search_prompt(callback: CallbackQuery, state: FSMContext) ->
 
 
 @router.message(DashboardFilter.waiting_position_filter)
-async def dashboard_search_result(message: Message, state: FSMContext) -> None:
+async def dashboard_search_result(message: Message, state: FSMContext, session: AsyncSession) -> None:
     query = (message.text or "").strip()
     await state.clear()
     if not query:
         await message.answer("❌ Введите имя для поиска.")
         return
-    apps = db.search_applications_by_name(query)
+    apps = await db.search_applications_by_name(session, query)
     if not apps:
         await message.answer(f"🔍 По запросу «{query}» ничего не найдено.")
         return
@@ -236,11 +244,11 @@ async def dashboard_search_result(message: Message, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data == "dash:export")
-async def dashboard_export(callback: CallbackQuery) -> None:
+async def dashboard_export(callback: CallbackQuery, session: AsyncSession) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer()
         return
-    apps = db.get_all_applications()
+    apps = await db.get_all_applications(session)
     if not apps:
         await callback.answer("Нет данных для экспорта.", show_alert=True)
         return
@@ -249,7 +257,11 @@ async def dashboard_export(callback: CallbackQuery) -> None:
     writer = csv.writer(output)
     writer.writerow(["ID", "user_id", "ФИО", "Дата рождения", "Телефон", "Вакансия", "Статус", "Оценка", "Комментарий HR", "Дата подачи", "Дата собеседования"])
     for a in apps:
-        writer.writerow([a["id"], a["user_id"], a["name"], a["birthday"], a["phone"], a["position"], a["status"], a.get("hr_score", ""), a.get("hr_comment", ""), a["created_at"], a.get("interview_time", "")])
+        writer.writerow([
+            a["id"], a["user_id"], a["name"], a["birthday"], a["phone"],
+            a["position"], a["status"], a.get("hr_score", ""), a.get("hr_comment", ""),
+            a["created_at"], a.get("interview_time", ""),
+        ])
     csv_bytes = output.getvalue().encode("utf-8-sig")
     filename  = f"mado_applications_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
     await callback.message.answer_document(
@@ -260,11 +272,11 @@ async def dashboard_export(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data == "dash:refresh")
-async def dashboard_refresh(callback: CallbackQuery) -> None:
+async def dashboard_refresh(callback: CallbackQuery, session: AsyncSession) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer()
         return
     with suppress(TelegramAPIError):
         await callback.message.delete()
-    await _send_dashboard(callback.message)
+    await _send_dashboard(callback.message, session)
     await callback.answer()

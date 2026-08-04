@@ -1,22 +1,27 @@
 # bot/handlers/user/subscription.py
 
 from aiogram import Router
-from aiogram.types import CallbackQuery
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.types import CallbackQuery
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db import database as db
-from bot.messages import LOCALIZATION
-from bot.middlewares.subscription import _build_subscribe_keyboard, _is_subscribed
+from bot.db import requests as db
+from bot.lexicon import LOCALIZATION
+from bot.middlewares.auth import build_subscribe_keyboard, is_subscribed
 
 router = Router()
 
 
 @router.callback_query(lambda c: c.data == "check_subscription")
-async def handle_check_subscription(callback: CallbackQuery, lang: str = None) -> None:
+async def handle_check_subscription(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    lang: str = None,
+) -> None:
     if not lang:
-        lang = db.get_user_lang(callback.from_user.id) or "ru"
-    user_id = callback.from_user.id
-    if await _is_subscribed(callback.bot, user_id):
+        lang = await db.get_user_lang(session, callback.from_user.id) or "ru"
+
+    if await is_subscribed(callback.bot, callback.from_user.id):
         try:
             await callback.message.edit_text(LOCALIZATION[lang]["subscription_confirmed"], parse_mode="HTML")
         except TelegramBadRequest:
@@ -25,6 +30,6 @@ async def handle_check_subscription(callback: CallbackQuery, lang: str = None) -
     else:
         await callback.answer(LOCALIZATION[lang]["subscription_not_done"], show_alert=True)
         try:
-            await callback.message.edit_reply_markup(reply_markup=_build_subscribe_keyboard(lang))
+            await callback.message.edit_reply_markup(reply_markup=build_subscribe_keyboard(lang))
         except TelegramBadRequest:
             pass
