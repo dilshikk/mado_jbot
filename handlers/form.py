@@ -29,6 +29,23 @@ EXPERIENCE_OPTIONS_RU = {"Нет опыта", "Менее 1 года", "1–2 г
 EXPERIENCE_OPTIONS_UZ = {"Tajriba yo'q", "1 yildan kam", "1–2 yil", "3–5 yil", "5+ yil"}
 
 
+def _get_valid_position_labels() -> set[str]:
+    """
+    Возвращает множество допустимых названий вакансий из БД (обе локали).
+    Используется для валидации выбора кандидата.
+    """
+    vacancies = db.get_active_vacancies()
+    labels: set[str] = set()
+    for v in vacancies:
+        for key in ("name_ru", "name_uz"):
+            name  = v.get(key, "").strip()
+            emoji = v.get("emoji", "").strip()
+            if name:
+                labels.add(f"{emoji} {name}".strip())
+                labels.add(name)   # на случай если эмодзи не совпадает
+    return labels
+
+
 # ── Отмена ────────────────────────────────────────────────────────────────────
 
 @router.message(IsCancelMessage(), Form.waiting_branch)
@@ -60,6 +77,18 @@ async def start_anketa(message: Message, state: FSMContext, lang: str) -> None:
     if db.is_user_blocked(message.from_user.id):
         await message.answer(
             LOCALIZATION[lang]["user_blocked_text"], parse_mode="HTML"
+        )
+        return
+
+    # Проверяем, есть ли хоть одна активная вакансия
+    if not db.get_active_vacancies():
+        await message.answer(
+            "⏳ <b>В данный момент открытых вакансий нет.</b>\n\n"
+            "Следите за обновлениями — мы скоро откроем новый набор!"
+            if lang == "ru" else
+            "⏳ <b>Hozirda ochiq vakansiyalar yo'q.</b>\n\n"
+            "Yangilanishlarni kuzatib boring — tez orada yangi to'plam ochamiz!",
+            parse_mode="HTML",
         )
         return
 
@@ -125,16 +154,20 @@ async def process_branch(message: Message, state: FSMContext, lang: str) -> None
 
 @router.message(Form.waiting_position)
 async def process_position(message: Message, state: FSMContext, lang: str) -> None:
-    position_keys   = ("pos_cook", "pos_waiter", "pos_runner", "pos_barista", "pos_cleaner")
-    valid_positions = [LOCALIZATION[lang].get(k) for k in position_keys]
+    # Валидируем по актуальному списку из БД
+    valid = _get_valid_position_labels()
+    chosen = (message.text or "").strip()
 
-    if not any(
-        p and (message.text or "").strip().startswith(p.split()[0])
-        for p in valid_positions
-    ):
+    if chosen not in valid:
+        # Повторяем вопрос с актуальной клавиатурой
+        await message.answer(
+            LOCALIZATION[lang]["ask_position"],
+            reply_markup=kb.get_positions_keyboard(lang),
+            parse_mode="HTML",
+        )
         return
 
-    await state.update_data(position=message.text)
+    await state.update_data(position=chosen)
     await message.answer(
         LOCALIZATION[lang]["ask_name"],
         reply_markup=kb.get_cancel_keyboard(lang),
@@ -448,7 +481,6 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str) -
             raise RuntimeError("append_to_sheet вернул False")
     except Exception as e:
         logger.error("Ошибка Google Sheets: %s", e, exc_info=True)
-        # Уведомляем всех администраторов о сбое
         error_text = (
             f"⚠️ <b>Google Sheets: ошибка записи!</b>\n\n"
             f"👤 Кандидат: <b>{data.get('name')}</b>\n"
@@ -466,9 +498,7 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str) -
                     parse_mode="HTML",
                 )
             except Exception as notify_err:
-                logger.error(
-                    "Не удалось уведомить admin_id=%d: %s", admin_id, notify_err
-                )
+                logger.error("Не удалось уведомить admin_id=%d: %s", admin_id, notify_err)
 
     await message.answer(
         LOCALIZATION[lang]["anketa_done"],
