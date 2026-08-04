@@ -1,5 +1,6 @@
 # keyboards.py
 
+import database as db
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -83,22 +84,29 @@ def get_phone_keyboard(lang: str) -> ReplyKeyboardMarkup:
 
 
 def get_positions_keyboard(lang: str) -> ReplyKeyboardMarkup:
-    t = _texts(lang)
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            _row(
-                KeyboardButton(text=t.get("pos_cook",    "Повар 👨‍🍳")),
-                KeyboardButton(text=t.get("pos_waiter",  "Официант 🤵")),
-            ),
-            _row(
-                KeyboardButton(text=t.get("pos_runner",  "Раннер 🏃‍♂️")),
-                KeyboardButton(text=t.get("pos_barista", "Бариста ☕️")),
-            ),
-            _row(KeyboardButton(text=t.get("pos_cleaner", "Тех. персонал 🧹"))),
-            _row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")),
-        ],
-        resize_keyboard=True,
-    )
+    """
+    Клавиатура вакансий — берётся из БД (только активные).
+    Каждая строка — одна вакансия с эмодзи и локализованным названием.
+    """
+    vacancies = db.get_active_vacancies()
+    name_key  = "name_ru" if lang == "ru" else "name_uz"
+
+    keyboard: list[list[KeyboardButton]] = []
+    row: list[KeyboardButton] = []
+
+    for v in vacancies:
+        label = f"{v['emoji']} {v[name_key]}".strip()
+        row.append(KeyboardButton(text=label))
+        if len(row) == 2:          # по 2 кнопки в строке
+            keyboard.append(row)
+            row = []
+
+    if row:                        # остаток нечётных кнопок
+        keyboard.append(row)
+
+    keyboard.append(_row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")))
+
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
 def get_branch_keyboard(lang: str) -> ReplyKeyboardMarkup:
@@ -232,7 +240,6 @@ def get_hr_action_keyboard(
 ) -> InlineKeyboardMarkup:
     buttons: list[list[InlineKeyboardButton]] = []
 
-    # Связь через Telegram если username валидный
     clean = username.lstrip("@").strip().lower()
     if clean and clean not in _EMPTY_USERNAME:
         buttons.append([
