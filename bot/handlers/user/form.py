@@ -49,6 +49,7 @@ _FORM_ACTIVE_STATES = (
     Form.waiting_photo, Form.waiting_video, Form.waiting_confirmation,
 )
 
+
 def _valid_position_labels(vacancies: list[dict]) -> set[str]:
     labels: set[str] = set()
     for v in vacancies:
@@ -60,6 +61,7 @@ def _valid_position_labels(vacancies: list[dict]) -> set[str]:
                 labels.add(name)
     return labels
 
+
 @router.message(StateFilter(*_FORM_ACTIVE_STATES), IsCancelMessage())
 @router.message(StateFilter(*_FORM_ACTIVE_STATES), Command("cancel"))
 async def cancel_form(message: Message, state: FSMContext, lang: str) -> None:
@@ -67,6 +69,7 @@ async def cancel_form(message: Message, state: FSMContext, lang: str) -> None:
     await state.clear()
     await state.update_data(lang=lang)
     await message.answer(LOCALIZATION[lang]["anketa_cancelled"], reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
+
 
 @router.message(F.text.in_(["\ud83d\udcdd \u0417\u0430\u043f\u043e\u043b\u043d\u0438\u0442\u044c \u0430\u043d\u043a\u0435\u0442\u0443", "\ud83d\udcdd Anketani to'ldirish"]))
 async def start_anketa(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
@@ -100,6 +103,7 @@ async def start_anketa(message: Message, state: FSMContext, lang: str, session: 
     await message.answer(LOCALIZATION[lang]["ask_name"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_name)
 
+
 @router.message(Form.waiting_name)
 async def process_name(message: Message, state: FSMContext, lang: str) -> None:
     text = (message.text or "").strip()
@@ -109,6 +113,7 @@ async def process_name(message: Message, state: FSMContext, lang: str) -> None:
     await state.update_data(name=text)
     await message.answer(LOCALIZATION[lang]["ask_birthday"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_birthday)
+
 
 @router.message(Form.waiting_birthday)
 async def process_birthday(message: Message, state: FSMContext, lang: str) -> None:
@@ -132,6 +137,7 @@ async def process_birthday(message: Message, state: FSMContext, lang: str) -> No
     await message.answer(LOCALIZATION[lang]["ask_gender"], reply_markup=kb.get_gender_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_gender)
 
+
 @router.message(Form.waiting_gender)
 async def process_gender(message: Message, state: FSMContext, lang: str) -> None:
     if message.text not in {LOCALIZATION[lang]["gender_male"], LOCALIZATION[lang]["gender_female"]}:
@@ -140,6 +146,7 @@ async def process_gender(message: Message, state: FSMContext, lang: str) -> None
     await state.update_data(gender=message.text)
     await message.answer(LOCALIZATION[lang]["ask_phone"], reply_markup=kb.get_phone_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_phone)
+
 
 @router.message(Form.waiting_phone)
 async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
@@ -153,6 +160,7 @@ async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
     await state.update_data(phone=phone)
     await message.answer(LOCALIZATION[lang]["ask_metro"], reply_markup=kb.get_metro_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_metro)
+
 
 @router.message(Form.waiting_metro)
 async def process_metro(message: Message, state: FSMContext, lang: str) -> None:
@@ -171,6 +179,7 @@ async def process_metro(message: Message, state: FSMContext, lang: str) -> None:
     await message.answer(LOCALIZATION[lang]["ask_languages"], reply_markup=kb.get_languages_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_languages)
 
+
 # ── Раздел «Информация о работе»: должность → готовность → опыт → ... ──
 
 @router.message(Form.waiting_position)
@@ -188,6 +197,7 @@ async def process_position(message: Message, state: FSMContext, lang: str, sessi
     await state.update_data(position=chosen)
     await message.answer(LOCALIZATION[lang]["ask_readiness"], reply_markup=kb.get_readiness_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_readiness)
+
 
 @router.message(Form.waiting_video)
 async def process_video(message: Message, state: FSMContext, lang: str) -> None:
@@ -216,8 +226,14 @@ async def process_video(message: Message, state: FSMContext, lang: str) -> None:
     await message.answer(summary, reply_markup=kb.get_confirmation_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_confirmation)
 
+
 @router.message(Form.waiting_confirmation)
-async def process_confirmation(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
+async def process_confirmation(
+    message: Message,
+    state: FSMContext,
+    lang: str,
+    session: AsyncSession,
+) -> None:
     data = await state.get_data()
 
     if message.text in {LOCALIZATION["ru"]["confirm_btn_no"], LOCALIZATION["uz"]["confirm_btn_no"]}:
@@ -244,7 +260,6 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
                 await message.answer(block_text, parse_mode="HTML")
                 await state.clear()
                 return
-
             app_id = await _do_save_application(session, user, data)
     else:
         app_id = await _do_save_application(session, user, data)
@@ -257,8 +272,11 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
     confirm_text = LOCALIZATION[lang]["anketa_confirmed"]
     await message.answer(confirm_text, reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
 
-    # Дальнейшие шаги вынесены в фон (не блокируют подтверждение пользователя)
-    asyncio.create_task(_post_confirm_tasks(message.bot, session, user, data, lang, app_id))
+    # Фоновые задачи: HR-отправка, график, AI-скрининг, старт интервью
+    # Передаём message и state чтобы start_interview мог установить новый FSM-стейт.
+    asyncio.create_task(
+        _post_confirm_tasks(message.bot, session, user, data, lang, app_id, message, state)
+    )
 
 
 async def _do_save_application(session: AsyncSession, user, data: dict) -> int:
@@ -294,8 +312,11 @@ async def _post_confirm_tasks(
     data: dict,
     lang: str,
     app_id: int,
+    message: Message,
+    state: FSMContext,
 ) -> None:
-    """\u0424\u043e\u043d\u043e\u0432\u044b\u0435 \u0437\u0430\u0434\u0430\u0447\u0438 \u043f\u043e\u0441\u043b\u0435 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u044f \u0430\u043d\u043a\u0435\u0442\u044b: HR-\u043e\u0442\u043f\u0440\u0430\u0432\u043a\u0430, \u0433\u0440\u0430\u0444\u0438\u043a, AI-\u0441\u043a\u0440\u0438\u043d\u0438\u043d\u0433."""
+    """\u0424\u043e\u043d\u043e\u0432\u044b\u0435 \u0437\u0430\u0434\u0430\u0447\u0438 \u043f\u043e\u0441\u043b\u0435 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u044f: HR-\u043e\u0442\u043f\u0440\u0430\u0432\u043a\u0430, \u0433\u0440\u0430\u0444\u0438\u043a, AI-\u0441\u043a\u0440\u0438\u043d\u0438\u043d\u0433, \u0441\u0442\u0430\u0440\u0442 \u0438\u043d\u0442\u0435\u0440\u0432\u044c\u044e."""
+    # ── 1. HR-отправка новой анкеты ──
     try:
         username_raw = user.username or LOCALIZATION["ru"]["none_text"]
         resume_text = build_hr_resume_text(data, user.id, username_raw)
@@ -313,28 +334,59 @@ async def _post_confirm_tasks(
     except Exception as e:
         logger.error("Ошибка HR-отправки: %s", e, exc_info=True)
 
+    # ── 2. Google Sheets ──
     try:
         await append_to_sheet(data, user.id, user.username)
     except Exception as e:
         logger.warning("Ошибка Google Sheets: %s", e)
 
+    # ── 3. AI-скрининг (резюме + проверка честности) ──
     try:
         await screen_application(bot, session, user.id, data)
     except Exception as e:
         logger.error("Ошибка AI-скрининга: %s", e, exc_info=True)
 
+    # ── 4. AI-интервью ──
+    # Импорт здесь а не на верху файла, чтобы избежать циклических зависимостей.
+    from bot.handlers.user.interview import start_interview  # noqa: PLC0415
     try:
-        from bot.handlers.user.interview import start_interview  # noqa: PLC0415
-        await bot.send_message(
-            chat_id=user.id,
-            text=(
-                "🤖 <b>Recruiter AI готов провести краткое интервью.</b>\n\n"
-                "Я задам несколько вопросов, чтобы HR мог лучше вас узнать."
-                if lang == "ru" else
-                "🤖 <b>Recruiter AI qisqacha intervyu o'tkazmoqchi.</b>\n\n"
-                "HR sizni yaxshiroq tanishi uchun bir necha savol beraman."
-            ),
-            parse_mode="HTML",
+        await start_interview(
+            message=message,
+            state=state,
+            session=session,
+            form_data=data,
+            lang=lang,
         )
     except Exception as e:
-        logger.error("Ошибка отправки intro-сообщения: %s", e, exc_info=True)
+        logger.error(
+            "Сбой start_interview user_id=%d: %s",
+            user.id, e, exc_info=True,
+        )
+        # ── fallback: сообщаем пользователю, что HR свяжется напрямую ──
+        fallback_text = (
+            "✅ Анкета принята! \n\n"
+            "Наш HR-менеджер рассмотрит её и свяжется с вами в ближайшее время."
+            if lang == "ru" else
+            "✅ Ariza qabul qilindi! \n\n"
+            "HR menejerimiz uni ko'rib chiqadi va tez orada siz bilan bog'lanadi."
+        )
+        try:
+            await bot.send_message(chat_id=user.id, text=fallback_text, parse_mode="HTML")
+        except Exception as notify_err:
+            logger.error("Ошибка отправки fallback-сообщения: %s", notify_err)
+
+        # ── уведомляем HR чтобы связались с кандидатом сами ──
+        hr_name = data.get("name") or f"user#{user.id}"
+        hr_phone = data.get("phone") or "—"
+        try:
+            await bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=(
+                    f"⚠️ AI-интервью не запустилось \u2014 AI недоступен.\n"
+                    f"👤 {hr_name} | user_id: {user.id} | \ud83d� {hr_phone}\n\n"
+                    f"Свяжитесь с кандидатом напрямую."
+                ),
+                parse_mode="HTML",
+            )
+        except Exception as hr_err:
+            logger.error("Ошибка HR-уведомления о сбое интервью: %s", hr_err)
