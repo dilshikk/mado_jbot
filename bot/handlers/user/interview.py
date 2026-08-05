@@ -229,9 +229,10 @@ async def _finish_interview(
     await message.answer(thanks, parse_mode="HTML")
 
     # Уведомляем HR что идёт обработка
+    user_id = message.from_user.id if message.from_user else message.chat.id
     try:
-        app = await db.get_latest_application(session, message.chat.id)
-        name = (app or {}).get("name", f"user#{message.chat.id}")
+        app = await db.get_latest_application(session, user_id)
+        name = (app or {}).get("name", f"user#{user_id}")
         await message.bot.send_message(
             chat_id=ADMIN_CHAT_ID,
             text=f"⏳ <b>AI обрабатывает интервью</b> кандидата <b>{name}</b>...",
@@ -258,7 +259,7 @@ async def _finish_interview(
     )
 
     # Отправляем отчёт в HR-чат
-    await _send_hr_report(message.bot, session, session_id, message.chat.id)
+    await _send_hr_report(message.bot, session, session_id, user_id)
 
 
 def _fallback_question(lang: str, qa_log: list[dict], asked_questions: list[str]) -> str:
