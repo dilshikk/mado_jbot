@@ -6,22 +6,21 @@ import re
 from contextlib import suppress
 from datetime import datetime
 
-from aiogram import Bot, F, Router
+from aiogram import F, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.core.config import ADMIN_CHAT_ID, ADMIN_IDS
+from bot.core.config import ADMIN_IDS
 from bot.db import requests as db
 from bot.filters.common import IsCancelMessage, IsPrivateChat
 from bot import keyboards as kb
 from bot.lexicon import LOCALIZATION
-from bot.services.ai import screen_application
 from bot.services.gsheets import append_to_sheet
 from bot.states import Form
-from bot.utils.formatters import build_hr_resume_text, build_resume_text
+from bot.utils.formatters import build_resume_text
 
 router = Router()
 router.message.filter(IsPrivateChat())
@@ -32,7 +31,8 @@ MIN_VIDEO_DURATION = 15
 VALID_BRANCH       = "Tashkent City Mall"
 
 # Статусы, при которых повторная подача анкеты запрещена
-BLOCKING_STATUSES = {"pending", "accepted", "hired", "hold"}
+# interview_in_progress и interview_failed не блокируют — кандидат может повторить
+BLOCKING_STATUSES = {"pending", "accepted", "hired", "hold", "interview_in_progress"}
 
 # Все активные шаги анкеты (waiting_for_lang исключён — там своя логика)
 _FORM_ACTIVE_STATES = (
@@ -315,6 +315,10 @@ async def process_position(message: Message, state: FSMContext, lang: str, sessi
 @router.message(Form.waiting_video)
 async def process_video(message: Message, state: FSMContext, lang: str) -> None:
     btn_skip = LOCALIZATION[lang].get("btn_skip", "⏭ Пропустить")
+    duration = 0
+    file_id  = None
+    is_note  = False
+
     if message.text == btn_skip:
         await state.update_data(video_file_id=None, is_video_note=False, video_duration=0)
         logger.info("process_video: user_id=%d skipped", message.from_user.id)
@@ -336,7 +340,8 @@ async def process_video(message: Message, state: FSMContext, lang: str) -> None:
                 parse_mode="HTML",
             )
         return
-    if message.video_note or message.video:
+
+    if file_id is not None:
         if duration < MIN_VIDEO_DURATION:
             logger.debug(
                 "process_video: too short user_id=%d duration=%d min=%d",
@@ -362,6 +367,7 @@ async def process_video(message: Message, state: FSMContext, lang: str) -> None:
             "process_video: user_id=%d duration=%d is_note=%s",
             message.from_user.id, duration, is_note,
         )
+
     # ── Итоговая сводка анкеты → подтверждение ──
     data    = await state.get_data()
     summary = build_resume_text(data, lang)
@@ -404,8 +410,8 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
 
     now_str      = datetime.now().strftime("%d.%m.%Y %H:%M")
     username_raw = user.username or LOCALIZATION["ru"]["none_text"]
-    bot: Bot     = message.bot
 
+    # ── 1. Сохраняем анкету в БД ─────────────────────────────────────────────
     await db.save_application(
         session,
         user_id=user.id,
@@ -420,42 +426,7 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
         user.id, data.get("position"),
     )
 
-    resume_text = build_hr_resume_text(data, user.id, username_raw)
-    hr_keyboard = kb.get_hr_action_keyboard(
-        phone=data.get("phone"), username=username_raw, candidate_id=user.id,
-    )
-    hr_msg = await bot.send_message(
-        chat_id=ADMIN_CHAT_ID, text=resume_text, reply_markup=hr_keyboard, parse_mode="HTML",
-    )
-
-    # AI-скрининг анкеты
-    ai_summary = await screen_application(data)
-    if ai_summary:
-        try:
-            await bot.send_message(
-                chat_id=ADMIN_CHAT_ID,
-                text=f"🤖 <b>AI-скрининг</b>\n{'─'*24}\n{ai_summary}",
-                parse_mode="HTML",
-                reply_to_message_id=hr_msg.message_id,
-            )
-        except Exception as e:
-            logger.error("Не удалось отправить AI-скрининг: %s", e)
-
-    video_file_id = data.get("video_file_id")
-    if video_file_id:
-        try:
-            if data.get("is_video_note"):
-                video_msg = await bot.send_video_note(chat_id=ADMIN_CHAT_ID, video_note=video_file_id)
-            else:
-                video_msg = await bot.send_video(
-                    chat_id=ADMIN_CHAT_ID,
-                    video=video_file_id,
-                    caption=f"🎥 {data.get('name')} (@{username_raw})",
-                )
-            await db.save_hr_video_msg_id(session, user.id, video_msg.message_id)
-        except Exception as e:
-            logger.error("Ошибка отправки видео HR: %s", e, exc_info=True)
-
+    # ── 2. Записываем в Google Sheets ────────────────────────────────────────
     row_data = [
         now_str, data.get("branch"), data.get("position"), data.get("name"),
         data.get("birthday"), data.get("gender"), data.get("phone"),
@@ -473,6 +444,7 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
             raise RuntimeError("append_to_sheet вернул False")
     except Exception as e:
         logger.error("Ошибка Google Sheets: %s", e, exc_info=True)
+        from bot.core.config import ADMIN_IDS as _AIDS  # noqa: PLC0415
         error_text = (
             f"⚠️ <b>Google Sheets: ошибка записи!</b>\n\n"
             f"👤 Кандидат: <b>{data.get('name')}</b>\n"
@@ -481,12 +453,13 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
             f"<i>Данные в БД сохранены.</i>\n"
             f"🔴 Ошибка: <code>{e}</code>"
         )
-        for admin_id in ADMIN_IDS:
-            try:
-                await bot.send_message(chat_id=admin_id, text=error_text, parse_mode="HTML")
-            except Exception as notify_err:
-                logger.error("Не удалось уведомить admin_id=%d: %s", admin_id, notify_err)
+        from aiogram import Bot as _Bot  # noqa: PLC0415
+        _bot: _Bot = message.bot
+        for admin_id in _AIDS:
+            with suppress(Exception):
+                await _bot.send_message(chat_id=admin_id, text=error_text, parse_mode="HTML")
 
+    # ── 3. Уведомляем кандидата об успешной подаче анкеты ────────────────────
     with suppress(TelegramAPIError):
         await message.answer(
             LOCALIZATION[lang]["anketa_done"],
@@ -494,10 +467,15 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
             parse_mode="HTML",
         )
 
-    # ── Запуск AI-интервью ────────────────────────────────────────────────────
+    # ── 4. В HR-группу НИЧЕГО не отправляем — только после завершения интервью ──
+    # Весь пакет (анкета + интервью + AI-анализ) отправляется из interview._finish_interview()
+
+    # ── 5. Запускаем AI-интервью ──────────────────────────────────────────────
     from bot.handlers.user.interview import start_interview  # noqa: PLC0415
 
     form_data_for_interview = dict(data)
+    # Сохраняем username для итогового пакета
+    form_data_for_interview["username"] = username_raw
 
     await state.clear()
     await state.update_data(lang=lang)
@@ -512,3 +490,5 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
         )
     except Exception as e:
         logger.error("Ошибка запуска интервью для user_id=%d: %s", user.id, e, exc_info=True)
+        # Если интервью не запустилось — устанавливаем статус для повтора
+        await db.update_application_status(session, user.id, "interview_failed")
