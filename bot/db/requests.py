@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.db.models.application import Application
 from bot.db.models.blacklist import Blacklist
 from bot.db.models.interview import InterviewSession
+from bot.db.models.metro_station import MetroStation
 from bot.db.models.user import User
 from bot.db.models.vacancy import Vacancy
 
@@ -80,6 +81,38 @@ async def delete_vacancy(session: AsyncSession, vacancy_id: int) -> None:
 async def get_vacancy_by_id(session: AsyncSession, vacancy_id: int) -> dict | None:
     vacancy = await session.get(Vacancy, vacancy_id)
     return _to_dict(vacancy) if vacancy else None
+
+
+# ── Станции метро ─────────────────────────────────────────────────────────────
+
+async def get_metro_stations_by_line(session: AsyncSession, line: str) -> list[dict]:
+    """Возвращает активные станции заданной линии, упорядоченные по sort_order."""
+    rows = (await session.scalars(
+        select(MetroStation)
+        .where(MetroStation.line == line, MetroStation.active == 1)
+        .order_by(MetroStation.sort_order)
+    )).all()
+    return [_to_dict(s) for s in rows]
+
+
+async def get_metro_station_by_id(session: AsyncSession, station_id: int) -> dict | None:
+    """Возвращает станцию по ID или None."""
+    station = await session.get(MetroStation, station_id)
+    return _to_dict(station) if station else None
+
+
+async def get_metro_station_name(
+    session: AsyncSession,
+    station_id: int | None,
+    lang: str = "ru",
+) -> str:
+    """Возвращает локализованное название станции или «—» если не задано."""
+    if station_id is None:
+        return "—"
+    station = await session.get(MetroStation, station_id)
+    if not station:
+        return "—"
+    return station.name_uz if lang == "uz" else station.name_ru
 
 
 # ── Пользователи ──────────────────────────────────────────────────────────────
@@ -178,10 +211,12 @@ async def save_application(
     phone: str,
     position: str,
     experience: str = "—",
+    metro_station_id: int | None = None,
 ) -> int:
     app = Application(
         user_id=user_id, name=name, birthday=birthday, phone=phone,
         position=position, experience=experience, status="pending",
+        metro_station_id=metro_station_id,
         created_at=_now(),
     )
     session.add(app)
