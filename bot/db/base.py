@@ -133,32 +133,54 @@ async def init_db() -> None:
     logger.info("БД инициализирована: %s", settings.database_url)
 
 
+# Дефолтный список вакансий MADO.
+# Для каждой вакансии в bot/ai/interview.py есть свой набор тем и вопросов.
+_DEFAULT_VACANCIES: list[tuple[str, str, str, int]] = [
+    ("Повар",         "Oshpaz",        "👨‍🍳", 0),
+    ("Официант",      "Ofitsiant",     "🤵",   1),
+    ("Раннер",        "Yuguruvchi",    "🏃",   2),
+    ("Бариста",       "Barista",       "☕️",  3),
+    ("Тех. персонал", "Texnik xodim",  "🧹",   4),
+    ("Кондитер",      "Qandolatchi",   "🍰",   5),
+    ("Администратор", "Administrator", "👨‍💼", 6),
+    ("Хостес",        "Xostes",        "🙋",   7),
+    ("Кассир",        "Kassir",        "💵",   8),
+]
+
+
 async def _seed_vacancies() -> None:
+    """Добавляет дефолтные вакансии и досоздаёт отсутствующие.
+
+    Если таблица не пуста — досоздаём только те вакансии, которых ещё нет
+    (по русскому названию). Это позволяет добавлять новые должности
+    без ручного вмешательства в уже работающую базу.
+    """
     from bot.db.models.vacancy import Vacancy
 
-    defaults = [
-        ("Повар",         "Oshpaz",       "👨‍🍳", 0),
-        ("Официант",      "Ofitsiant",    "🤵",   1),
-        ("Раннер",        "Yuguruvchi",   "🏃",   2),
-        ("Бариста",       "Barista",      "☕️",  3),
-        ("Тех. персонал", "Texnik xodim", "🧹",   4),
-    ]
-
     async with session_pool() as session:
-        count = await session.scalar(select(func.count(Vacancy.id)))
-        if count:
+        existing_names: set[str] = set(
+            (await session.scalars(select(Vacancy.name_ru))).all()
+        )
+        to_add = [v for v in _DEFAULT_VACANCIES if v[0] not in existing_names]
+
+        if not to_add:
             logger.info(
-                "Вакансии уже есть в БД (%d шт.), сидирование пропущено.", count,
+                "Все дефолтные вакансии уже есть в БД (%d шт.), сидирование пропущено.",
+                len(existing_names),
             )
             return
+
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        for name_ru, name_uz, emoji, order in defaults:
+        for name_ru, name_uz, emoji, order in to_add:
             session.add(Vacancy(
                 name_ru=name_ru, name_uz=name_uz, emoji=emoji,
                 is_active=1, sort_order=order, created_at=now,
             ))
         await session.commit()
-    logger.info("Дефолтные вакансии добавлены (%d шт.).", len(defaults))
+    logger.info(
+        "Вакансии добавлены (%d шт.): %s",
+        len(to_add), ", ".join(v[0] for v in to_add),
+    )
 
 
 async def _seed_metro_stations() -> None:
