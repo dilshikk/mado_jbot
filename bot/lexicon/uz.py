@@ -1,13 +1,13 @@
 # bot/lexicon/uz.py
 
 TEXTS_UZ = {
-    # ── Общее ─────────────────────────────────────────────────────────────
+    # ── Общее ─────────────────────────────────────────────────
     "welcome":          "👋 <b>MADO</b>-ga xush kelibsiz!\n\nBu yerda restoranimizda ishlash uchun ariza topshirishingiz mumkin.",
     "about_text":       "🏢 <b>MADO</b> — eng yaxshi oshxona an'analarini birlashtirgan xalqaro restoranlar tarmog'i.\n\nBiz doim iqtidorli xodimlarga xursandmiz!",
     "anketa_cancelled": "❌ Anketa to'ldirish bekor qilindi. Asosiy menyuga qaytdingiz.",
     "none_text":        "mavjud emas",
 
-    # ── Блокировка ────────────────────────────────────────────────────────
+    # ── Блокировка ───────────────────────────────────────────
     "user_blocked_text": (
         "⚠️ <b>Kirish cheklangan.</b>\n\n"
         "Sizning anketangiz avval rad etilgan. "
@@ -15,7 +15,7 @@ TEXTS_UZ = {
         "Agar bu xato deb o'ylasangiz — biz bilan bog'laning."
     ),
 
-    # ── Подписка на канал ─────────────────────────────────────────────────
+    # ── Подписка на канал ────────────────────────────────────
     "subscription_not_subscribed": (
         "🔒 <b>Kirish cheklangan</b>\n\n"
         "Botdan foydalanish uchun kanalimizga obuna bo'ling.\n\n"
@@ -27,18 +27,18 @@ TEXTS_UZ = {
     "btn_subscribe_channel":        "📢 Kanalga obuna bo'lish",
     "btn_check_subscription":       "✅ Obuna bo'ldim",
 
-    # ── Шаги анкеты ───────────────────────────────────────────────────────
+    # ── Шаги анкеты ──────────────────────────────────────────
     "ask_branch":      "📍 Ishlamoqchi bo'lgan <b>filialni</b> tanlang:",
     "ask_position":    "💼 <b>Bo'sh ish o'rnini</b> tanlang:",
     "ask_name":        "👤 <b>F.I.Sh.</b> ni to'liq kiriting:",
     "ask_birthday":    "📅 <b>Tug'ilgan sanangizni</b> DD.MM.YYYY formatida kiriting\nMasalan: <code>25.06.1995</code>",
-    "ask_gender":      "🚻 <b>Jinsingizni</b> ko'rsating:",
+    "ask_gender":      "🚺 <b>Jinsingizni</b> ko'rsating:",
     "ask_citizenship": "🔹 <b>Fuqaroligingizni</b> ko'rsating yoki «⏭ O'tkazib yuborish» tugmasini bosing:",
     "ask_address":     "🏡 <b>Yashash manzilingizni</b> kiriting\n(shahar, tuman, ko'cha / kvartal):",
     "ask_metro":       "🚇 <b>Eng yaqin metro</b>ni tanlang yoki «⏭ O'tkazib yuborish» tugmasini bosing:",
     "ask_phone":       "📱 <b>Telefon raqamingizni</b> yuboring:",
 
-    # ── Ошибки валидации ──────────────────────────────────────────────────
+    # ── Ошибки валидации ─────────────────────────────────────
     "bad_name": (
         "❌ Iltimos, to'g'ri F.I.Sh. kiriting.\n"
         "Kamida 3 ta harf, faqat harflar."
@@ -66,7 +66,7 @@ TEXTS_UZ = {
         "❌ Iltimos, taklif etilgan ro'yxatdan vakansiyani tanlang."
     ),
 
-    # ── Пол / Семья / Гражданство ─────────────────────────────────────────
+    # ── Пол / Семья / Гражданство ───────────────────────────────
     "gender_male":   "🚹 Erkak",
     "gender_female": "🚺 Ayol",
     "citizenship_uzb": "🇺🇿 O'zbekiston",
@@ -74,21 +74,25 @@ TEXTS_UZ = {
     "citizenship_skip":"⏭ O'tkazib yuborish",
     "field_metro":     "Eng yaqin metro",
 
-    # ── Вакансии ──────────────────────────────────────────────────────────
+    # ── Вакансии ───────────────────────────────────────────
     "pos_cook":    "Oshpaz 👨‍🍳",
     "pos_waiter":  "Ofitsiant 🤵",
     "pos_runner":  "Yuguruvchi 🏃‍♂️",
     "pos_barista": "Barista ☕️",
     "pos_cleaner": "Texnik xodim 🧹",
+    "pos_pastry":  "Qandolatchi 🍰",
+    "pos_admin":   "Administrator 👨‍💼",
+    "pos_hostess": "Xostes 🙋",
+    "pos_cashier": "Kassir 💵",
 
-    # ── Кнопки интерфейса ─────────────────────────────────────────────────
+    # ── Кнопки интерфейса ───────────────────────────────────
     "btn_apply":       "📝 Anketani to'ldirish",
     "btn_about":       "🏢 Restoran haqida",
     "btn_change_lang": "🌐 Tilni o'zgartirish",
     "btn_cancel":      "❌ Bekor qilish",
     "btn_share_phone": "📱 Kontaktni yuborish",
 
-    # ── Подтверждение ─────────────────────────────────────────────────────
+    # ── Подтверждение ─────────────────────────────────────
     "confirm_title":     "📋 <b>Yuborishdan oldin ma'lumotlaringizni tekshiring:</b>",
     "confirm_btn_yes":   "✅ Hammasi to'g'ri — yuborish",
     "confirm_btn_no":    "🔄 Qaytadan to'ldirish",
@@ -103,21 +107,21 @@ TEXTS_UZ = {
     "field_phone":       "Telefon",
     "field_username":    "Username",
 
-    # ── Финал анкеты ──────────────────────────────────────────────────────
+    # ── Финал анкеты ───────────────────────────────────────
     "anketa_done": (
         "🎉 <b>Anketa muvaffaqiyatli yuborildi!</b>\n\n"
         "HR menejerimiz arizangizni ko'rib chiqadi va siz bilan bog'lanadi.\n"
         "O'rtacha javob vaqti — <b>1–2 ish kuni</b>."
     ),
 
-    # ── Защита от дублей ──────────────────────────────────────────────────
+    # ── Защита от дублей ─────────────────────────────────────
     "anketa_block_pending":  "⏳ <b>Arizangiz allaqachon ko'rib chiqilmoqda.</b>\n\nHR menejer javobini kuting — qayta topshirish hozircha mumkin emas.",
     "anketa_block_accepted": "✅ <b>Siz allaqachon suhbatga taklif etilgansiz!</b>\n\nSizni belgilangan vaqtda kutamiz.",
     "anketa_block_hired":    "🏆 <b>Siz allaqachon MADO xodimisiz!</b>",
     "anketa_block_hold":     "⏸ <b>Anketangiz zaxiraga qoldirildi.</b>\n\nHR menejer keyinroq unga qaytadi. Qayta topshirish hozircha mumkin emas.",
     "anketa_already_exists": "⏳ <b>Sizda allaqachon faol ariza bor.</b>\n\nQayta yuborish mumkin emas.",
 
-    # ── Статус заявки ─────────────────────────────────────────────────────
+    # ── Статус заявки ───────────────────────────────────────
     "status_none":     "📋 Sizning faol arizangiz yo'q.",
     "status_pending":  "⏳ Arizangiz ko'rib chiqilmoqda. Javobni kuting.",
     "status_accepted": "✅ Tabriklaymiz! Siz suhbatga taklif etildingiz.",
@@ -131,7 +135,7 @@ TEXTS_UZ = {
         "hold":     "⏸ Arizangiz vaqtincha qoldirildi.",
     },
 
-    # ── Рассылка ──────────────────────────────────────────────────────────
+    # ── Рассылка ───────────────────────────────────────────
     "broadcast_no_reply": "↩️ Tarqatmoqchi bo'lgan xabarga javob bering.",
     "broadcast_progress": "📤 Yuborilmoqda... {current} / {total}",
     "broadcast_done": (
@@ -140,14 +144,14 @@ TEXTS_UZ = {
         "❌ Xato:      <b>{failed}</b>"
     ),
 
-    # ── Защита групп ──────────────────────────────────────────────────────
+    # ── Защита групп ────────────────────────────────────────
     "group_protection_text": (
         "⚠️ <b>Anketa faqat bot bilan shaxsiy xabarlarda to'ldiriladi!</b>\n"
         "Shaxsiy chatga o'tish uchun quyidagi tugmani bosing 👇"
     ),
     "btn_redirect_pm": "🚀 Shaxsiy xabarda ochish",
 
-    # ── HR-панель (уведомления кандидатам на узбекском) ───────────────────
+    # ── HR-панель (уведомления кандидатам на узбекском) ───────────────
     "default_anketa_title":  "📝 MADO nomzod anketi",
     "hr_resume_title":       "MADO yangi nomzod anketi",
     "hr_ask_interview":      "",
