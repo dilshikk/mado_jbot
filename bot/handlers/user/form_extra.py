@@ -158,6 +158,7 @@ async def handle_experience_yn(message: Message, state: FSMContext) -> None:
         with suppress(TelegramAPIError):
             await message.answer(
                 _t(lang, "ask_exp_company"),
+                # Место работы — обязательное поле (если выбрал "Да")
                 reply_markup=kb.get_cancel_keyboard(lang),
             )
     else:
@@ -181,7 +182,8 @@ async def handle_exp_company(message: Message, state: FSMContext) -> None:
     with suppress(TelegramAPIError):
         await message.answer(
             _t(lang, "ask_exp_position"),
-            reply_markup=kb.get_cancel_keyboard(lang),
+            # Должность — необязательная, показываем кнопку «Пропустить»
+            reply_markup=kb.get_skip_cancel_keyboard(lang),
         )
 
 
@@ -197,7 +199,8 @@ async def handle_exp_position(message: Message, state: FSMContext) -> None:
     with suppress(TelegramAPIError):
         await message.answer(
             _t(lang, "ask_exp_duration"),
-            reply_markup=kb.get_cancel_keyboard(lang),
+            # Стаж — необязательный, показываем кнопку «Пропустить»
+            reply_markup=kb.get_skip_cancel_keyboard(lang),
         )
 
 
@@ -213,7 +216,8 @@ async def handle_exp_duration(message: Message, state: FSMContext) -> None:
     with suppress(TelegramAPIError):
         await message.answer(
             _t(lang, "ask_exp_duties"),
-            reply_markup=kb.get_cancel_keyboard(lang),
+            # Обязанности — необязательные, показываем кнопку «Пропустить»
+            reply_markup=kb.get_skip_cancel_keyboard(lang),
         )
 
 
@@ -235,7 +239,8 @@ async def _ask_salary(message: Message, state: FSMContext, lang: str) -> None:
     with suppress(TelegramAPIError):
         await message.answer(
             _t(lang, "ask_salary"),
-            reply_markup=kb.get_cancel_keyboard(lang),
+            # Зарплата — необязательная, показываем кнопку «Пропустить»
+            reply_markup=kb.get_skip_cancel_keyboard(lang),
             parse_mode="HTML",
         )
 
@@ -386,7 +391,8 @@ async def handle_med_book(message: Message, state: FSMContext) -> None:
     with suppress(TelegramAPIError):
         await message.answer(
             _t(lang, "ask_photo"),
-            reply_markup=kb.get_cancel_keyboard(lang),
+            # Фото — необязательное, показываем кнопку «Пропустить»
+            reply_markup=kb.get_skip_cancel_keyboard(lang),
             parse_mode="HTML",
         )
 
@@ -413,7 +419,7 @@ async def handle_photo(message: Message, state: FSMContext) -> None:
         with suppress(TelegramAPIError):
             await message.answer(
                 _t(lang, "ask_photo"),
-                reply_markup=kb.get_cancel_keyboard(lang),
+                reply_markup=kb.get_skip_cancel_keyboard(lang),
                 parse_mode="HTML",
             )
         return
@@ -422,6 +428,7 @@ async def handle_photo(message: Message, state: FSMContext) -> None:
     with suppress(TelegramAPIError):
         await message.answer(
             _t(lang, "ask_video"),
-            reply_markup=kb.get_cancel_keyboard(lang),
+            # Видео — необязательное, показываем кнопку «Пропустить»
+            reply_markup=kb.get_skip_cancel_keyboard(lang),
             parse_mode="HTML",
         )
