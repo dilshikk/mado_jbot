@@ -1,6 +1,6 @@
 # bot/ai/agents.py
-"""Агенты оценки кандидата: резюме, навыки, личность, соответствие, итог,
-а также Fraud Detector, Language Quality, Red Flag и Interview Score."""
+"""9 AI-агентов: Resume Builder, Skill Analyzer, Personality, Job Matcher, HR Summary,
+Fraud Detector, Language Quality, Red Flag и Interview Score."""
 
 import asyncio
 import logging
@@ -58,7 +58,7 @@ async def _run_agent(system_prompt: str, user_content: str, max_tokens: int = 40
     return extract_text(result) if result else None
 
 
-# ── Новые агенты (промпты в этом файле, чтобы не раздувать prompts.py) ──────
+# ── Агенты скрининга (промпты здесь, чтобы не раздувать prompts.py) ─────────
 
 FRAUD_DETECTOR_SYSTEM = """\
 Ты — Fraud Detector AI. Выявляй противоречия в ответах кандидата.
@@ -72,7 +72,7 @@ FRAUD_DETECTOR_SYSTEM = """\
 Опирайся только на приведённые тексты. Не додумывай факты.
 
 Формат ответа (строго, на русском):
-ПРОТИВОРЕЧИЯ: список найденных противоречий (или «не выявлено»)
+🚨 ПРОТИВОРЕЧИЯ: список найденных противоречий (или «не выявлено»)
 УРОВЕНЬ РИСКА: низкий | средний | высокий
 ВЫВОД: 1-2 предложения"""
 
@@ -106,7 +106,7 @@ RED_FLAG_SYSTEM = """\
 Не делай предположений о личности, возрасте, семье и т.п.
 
 Формат ответа (строго, на русском):
-ФЛАГИ: список рисков с доказательствами (или «не выявлено»)
+⚠️ ФЛАГИ: список рисков с доказательствами (или «не выявлено»)
 УРОВЕНЬ РИСКА: низкий | средний | высокий
 ВЫВОД: 1-2 предложения"""
 
@@ -130,14 +130,39 @@ INTERVIEW_SCORE_SYSTEM = """\
 РЕКОМЕНДАЦИЯ: настоятельно рекомендую | рекомендую | под вопросом | не рекомендую
 ИТОГ: 2-3 предложения"""
 
+_SCREENING_SECTIONS = (
+    ("🚨 Fraud Detector",    "fraud"),
+    ("✍️ Language Quality",  "language_quality"),
+    ("⚠️ Red Flags",         "red_flags"),
+    ("📊 Interview Score",   "interview_score"),
+)
+
+
+def _merge_summary(base_summary: str | None, screening: dict) -> str | None:
+    """Склеивает HR Summary с отчётами агентов скрининга.
+
+    В БД и в сообщение HR попадает только поле summary — поэтому новые
+    отчёты добавляем разделами в него, не меняя схему сохранения.
+    """
+    parts = [base_summary] if base_summary else []
+    for title, key in _SCREENING_SECTIONS:
+        text = screening.get(key)
+        if text:
+            parts.append(f"{title}\n{'—' * 30}\n{text}")
+    return "\n\n".join(parts) if parts else None
+
 
 async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict:
-    """Запускает всех 9 агентов параллельно.
+    """Запускает всех агентов параллельно.
 
     Returns:
-        dict с ключами resume, skills, personality, job_match, summary,
-        fraud, language_quality, red_flags, interview_score.
-        Значение — текст отчёта агента или None при ошибке.
+        {
+            "resume": str | None,
+            "skills": str | None,
+            "personality": str | None,
+            "job_match": str | None,
+            "summary": str | None,  # HR Summary + разделы скрининга
+        }
     """
     context = _base_context(form_data, qa_log)
 
@@ -147,16 +172,15 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict:
         _run_agent(PERSONALITY_SYSTEM,  context, max_tokens=300),
         _run_agent(JOB_MATCH_SYSTEM,    context, max_tokens=300),
         _run_agent(HR_SUMMARY_SYSTEM,   context, max_tokens=400),
-        _run_agent(FRAUD_DETECTOR_SYSTEM,    context, max_tokens=400),
-        _run_agent(LANGUAGE_QUALITY_SYSTEM,  context, max_tokens=400),
-        _run_agent(RED_FLAG_SYSTEM,          context, max_tokens=400),
-        _run_agent(INTERVIEW_SCORE_SYSTEM,   context, max_tokens=500),
+        _run_agent(FRAUD_DETECTOR_SYSTEM,   context, max_tokens=400),
+        _run_agent(LANGUAGE_QUALITY_SYSTEM, context, max_tokens=400),
+        _run_agent(RED_FLAG_SYSTEM,         context, max_tokens=400),
         return_exceptions=True,
     )
 
     keys = (
         "resume", "skills", "personality", "job_match", "summary",
-        "fraud", "language_quality", "red_flags", "interview_score",
+        "fraud", "language_quality", "red_flags",
     )
     output: dict = {}
     for key, val in zip(keys, results):
@@ -165,4 +189,24 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict:
             output[key] = None
         else:
             output[key] = val
+
+    # Финальный агент оценивает кандидата с учётом отчётов скрининга
+    score_sections = []
+    for title, key in _SCREENING_SECTIONS[:3]:
+        text = output.get(key)
+        if text:
+            score_sections.append(f"--- {title} ---\n{text}")
+    score_context = context
+    if score_sections:
+        score_context += "\n\n=== ОТЧЁТЫ ДРУГИХ АГЕНТОВ ===\n" + "\n\n".join(score_sections)
+
+    try:
+        output["interview_score"] = await _run_agent(
+            INTERVIEW_SCORE_SYSTEM, score_context, max_tokens=500,
+        )
+    except Exception as exc:
+        logger.error("Агент interview_score упал с ошибкой: %s", exc)
+        output["interview_score"] = None
+
+    output["summary"] = _merge_summary(output.get("summary"), output)
     return output
