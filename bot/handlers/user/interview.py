@@ -59,22 +59,30 @@ async def _send_hr_report(bot, session: AsyncSession, session_id: int, user_id: 
         f"{'─'*30}\n"
     )
 
-    sections = [
-        ("📄 Resume Builder",     interview.get("report_resume")),
-        ("🎯 Skill Analyzer",     interview.get("report_skills")),
-        ("🧠 Personality",        interview.get("report_personality")),
-        ("💼 Job Matcher",        interview.get("report_job_match")),
-        ("📋 HR Summary",         interview.get("report_summary")),
-    ]
+    # Основной блок — текстовый summary из Python-рендера
+    summary = interview.get("report_summary") or ""
 
-    body = ""
-    for title, text in sections:
-        if text:
-            body += f"\n<b>{title}</b>\n{text}\n"
+    # Hiring Decision — читаем из JSON
+    decision_raw = interview.get("report_decision")
+    decision_block = ""
+    if decision_raw:
+        try:
+            dec = json.loads(decision_raw)
+            total = dec.get("total_score", "—")
+            decision_key = dec.get("decision", "")
+            _labels = {"invite": "✅ Пригласить", "review": "⚠️ Рассмотреть", "reject": "❌ Отклонить"}
+            conf = dec.get("confidence", None)
+            conf_str = f"  (уверенность: {conf:.0%})" if isinstance(conf, float) else ""
+            decision_block = (
+                f"\n<b>🏁 Решение: {_labels.get(decision_key, decision_key)}</b>{conf_str}\n"
+                f"Балл: <b>{total}/10</b>\n"
+            )
+        except Exception:
+            pass
 
-    full_text = header + (body or "⚠️ Агенты не вернули данных.")
+    full_text = header + summary + decision_block
 
-    # Telegram ограничивает сообщения до 4096 символов — режем если нужно
+    # Telegram: макс. 4096 символов
     if len(full_text) > 4000:
         full_text = full_text[:3990] + "\n<i>…(обрезано)</i>"
 
@@ -92,14 +100,10 @@ async def start_interview(
     lang: str,
 ) -> None:
     """Запускает интервью — вызывается из form.py после сохранения анкеты."""
-    # Создаём сессию интервью в БД
     session_id = await db.create_interview_session(session, message.from_user.id)
-
-    # Получаем первый вопрос от AI
     step = await get_next_step(form_data=form_data, qa_log=[], lang=lang)
 
     if step.get("done"):
-        # AI сразу сказал "хватит" (например, недоступен) — запускаем агентов без интервью
         await _finish_interview(message, state, session, session_id, form_data, lang)
         return
 
@@ -125,7 +129,6 @@ async def start_interview(
 
 @router.message(Interview.answering)
 async def process_answer(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    """Обрабатывает ответ кандидата и задаёт следующий вопрос или завершает."""
     data = await state.get_data()
     session_id = data.get("interview_session_id")
     form_data  = data.get("interview_form_data", {})
@@ -133,29 +136,23 @@ async def process_answer(message: Message, state: FSMContext, session: AsyncSess
     qa_log     = data.get("interview_qa_log", [])
     current_q  = data.get("interview_current_q", "")
 
-    # Добавляем ответ в лог
     qa_log.append({"q": current_q, "a": (message.text or "").strip()})
     await db.append_qa(session, session_id, qa_log)
 
-    # Спрашиваем AI — что дальше
     step = await get_next_step(form_data=form_data, qa_log=qa_log, lang=lang)
 
     if step.get("done"):
         await _finish_interview(message, state, session, session_id, form_data, lang, qa_log)
         return
 
-    # Следующий вопрос
     question = step["question"]
-    q_count = len(qa_log) + 1
-    await db.update_interview_session(session, session_id, q_count=q_count)
+    await db.update_interview_session(session, session_id, q_count=len(qa_log) + 1)
     await state.update_data(interview_qa_log=qa_log, interview_current_q=question)
-
     await message.answer(f"🤖 <b>{question}</b>", parse_mode="HTML", reply_markup=_skip_kb(lang))
 
 
 @router.callback_query(Interview.answering, F.data == "interview:skip")
 async def skip_question(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    """Пропустить текущий вопрос — записываем пустой ответ и идём дальше."""
     await callback.answer()
     data = await state.get_data()
     session_id = data.get("interview_session_id")
@@ -169,7 +166,6 @@ async def skip_question(callback: CallbackQuery, state: FSMContext, session: Asy
     await db.append_qa(session, session_id, qa_log)
 
     step = await get_next_step(form_data=form_data, qa_log=qa_log, lang=lang)
-
     if step.get("done"):
         await _finish_interview(callback.message, state, session, session_id, form_data, lang, qa_log)
         return
@@ -182,14 +178,12 @@ async def skip_question(callback: CallbackQuery, state: FSMContext, session: Asy
 
 @router.callback_query(Interview.answering, F.data == "interview:finish")
 async def force_finish(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    """Принудительное завершение интервью кандидатом."""
     await callback.answer()
     data = await state.get_data()
     session_id = data.get("interview_session_id")
     form_data  = data.get("interview_form_data", {})
     lang       = data.get("interview_lang", "ru")
     qa_log     = data.get("interview_qa_log", [])
-
     await _finish_interview(callback.message, state, session, session_id, form_data, lang, qa_log)
 
 
@@ -202,13 +196,12 @@ async def _finish_interview(
     lang: str,
     qa_log: list[dict] | None = None,
 ) -> None:
-    """Завершает интервью: запускает агентов, сохраняет отчёт, отправляет HR."""
+    """Завершает интервью: запускает пайплайн, сохраняет, отправляет HR."""
     if qa_log is None:
         qa_log = []
 
     await state.clear()
 
-    # Сообщаем кандидату
     thanks = (
         "✅ <b>Интервью завершено!</b>\n\nСпасибо за ответы. HR-менеджер свяжется с вами в ближайшее время."
         if lang == "ru" else
@@ -228,16 +221,22 @@ async def _finish_interview(
     except Exception:
         pass
 
-    # Запускаем 5 агентов параллельно
+    # Запускаем пайплайн
     reports = await run_all_agents(form_data, qa_log)
 
-    # Сохраняем отчёты в БД
+    # Сохраняем в БД
     await db.save_interview_reports(
         session,
         session_id=session_id,
         finished_at=_now(),
-        **reports,
+        resume=reports.get("resume"),
+        communication=reports.get("communication"),
+        integrity=reports.get("integrity"),
+        job_match=reports.get("job_match"),
+        decision=reports.get("decision"),
+        total_score=reports.get("total_score"),
+        summary=reports.get("summary"),
     )
 
-    # Отправляем полный отчёт в HR-чат
+    # Отправляем отчёт в HR-чат
     await _send_hr_report(message.bot, session, session_id, message.chat.id)
