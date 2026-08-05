@@ -65,11 +65,11 @@ def get_metro_stations_keyboard(
 
 # code → (label_ru, label_uz)
 _LANGUAGE_OPTIONS: tuple[tuple[str, str, str], ...] = (
-    ("ru",    "Русский",    "Rus tili"),
-    ("uz",    "Узбекский",  "O'zbek tili"),
-    ("en",    "Английский", "Ingliz tili"),
-    ("tr",    "Турецкий",   "Turk tili"),
-    ("other", "Другой",     "Boshqa"),
+    ("ru",    "Русский",     "Rus tili"),
+    ("uz",    "Узбекский",   "O'zbek tili"),
+    ("en",    "Английский",  "Ingliz tili"),
+    ("tr",    "Турецкий",    "Turk tili"),
+    ("other", "Другой",      "Boshqa"),
 )
 
 def get_languages_inline_keyboard(
@@ -78,20 +78,26 @@ def get_languages_inline_keyboard(
 ) -> InlineKeyboardMarkup:
     """Inline-клавиатура мультивыбора языков.
 
-    selected — уже выбранные коды языков (например ["ru", "en"]).
-    Выбранные помечаются ✅. Нижний ряд: «Готово» / «Пропустить».
-    Callback-данные согласованы с bot/handlers/user/form_extra.py:
-    lang_toggle:<code>, lang_done, lang_skip.
+    Кнопки языков по 2 в ряд. Выбранные помечаются ✅.
+    Последний ряд: «✅ Готово» / «⏭ Пропустить».
+    Callback-данные: lang_toggle:<code>, lang_done, lang_skip.
     """
     selected_set = set(selected)
     rows: list[list[InlineKeyboardButton]] = []
+
+    # Собираем все кнопки языков, затем разбиваем по 2 в ряд
+    buttons: list[InlineKeyboardButton] = []
     for code, label_ru, label_uz in _LANGUAGE_OPTIONS:
         label = label_uz if lang == "uz" else label_ru
         prefix = "✅ " if code in selected_set else ""
-        rows.append([InlineKeyboardButton(
+        buttons.append(InlineKeyboardButton(
             text=prefix + label,
             callback_data=f"lang_toggle:{code}",
-        )])
+        ))
+
+    # По 2 кнопки в ряд
+    for i in range(0, len(buttons), 2):
+        rows.append(buttons[i : i + 2])
 
     done_text = "✅ Tayyor" if lang == "uz" else "✅ Готово"
     skip_text = "⏭ O'tkazib yuborish" if lang == "uz" else "⏭ Пропустить"
@@ -126,8 +132,8 @@ def get_hr_action_keyboard(phone: str, username: str, candidate_id: int) -> Inli
     if clean and clean not in _EMPTY_USERNAME:
         buttons.append([InlineKeyboardButton(text="💬 Telegram", url=f"https://t.me/{clean}")])
     buttons.append([
-        InlineKeyboardButton(text="✅ Одобрить",  callback_data=f"hr_accept:{candidate_id}"),
-        InlineKeyboardButton(text="❌ Отклонить", callback_data=f"hr_reject:{candidate_id}"),
+        InlineKeyboardButton(text="✅ Одобрить",   callback_data=f"hr_accept:{candidate_id}"),
+        InlineKeyboardButton(text="❌ Отклонить",  callback_data=f"hr_reject:{candidate_id}"),
     ])
     buttons.append([InlineKeyboardButton(text="⏸ На паузу", callback_data=f"hr_hold:{candidate_id}")])
     buttons.append([InlineKeyboardButton(text="📊 Google Таблица", url=SHEET_URL)])
@@ -140,12 +146,7 @@ def get_hr_hold_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
     ]])
 
 def get_interview_schedule_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
-    """Inline-клавиатура быстрого выбора даты собеседования.
-
-    Показывает ближайшие 6 дней × 3 популярных времени (10:00, 14:00, 17:00).
-    HR может также ввести дату вручную — просто написать сообщением.
-    Кнопка «❌ Отмена» прерывает FSM без изменений.
-    """
+    """Inline-клавиатура быстрого выбора даты собеседования."""
     today = datetime.now()
     rows: list[list[InlineKeyboardButton]] = []
 
@@ -161,7 +162,6 @@ def get_interview_schedule_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
         row = []
         for t in times:
             label = f"{label_date} {t}"
-            # Передаём дату в формате ДД.ММ в callback чтобы парсер подхватил
             value = f"{day.strftime('%d.%m')} в {t}"
             row.append(InlineKeyboardButton(
                 text=label,
