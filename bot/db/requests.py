@@ -83,6 +83,27 @@ async def get_vacancy_by_id(session: AsyncSession, vacancy_id: int) -> dict | No
     return _to_dict(vacancy) if vacancy else None
 
 
+async def update_vacancy(
+    session: AsyncSession,
+    vacancy_id: int,
+    name_ru: str | None = None,
+    name_uz: str | None = None,
+    emoji: str | None = None,
+) -> bool:
+    """Обновляет поля вакансии. Возвращает True если запись найдена."""
+    vacancy = await session.get(Vacancy, vacancy_id)
+    if not vacancy:
+        return False
+    if name_ru is not None:
+        vacancy.name_ru = name_ru
+    if name_uz is not None:
+        vacancy.name_uz = name_uz
+    if emoji is not None:
+        vacancy.emoji = emoji
+    await session.commit()
+    return True
+
+
 # ── Станции метро ─────────────────────────────────────────────────────────────
 
 async def get_metro_stations_by_line(session: AsyncSession, line: str) -> list[dict]:
