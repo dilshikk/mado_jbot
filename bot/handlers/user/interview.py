@@ -271,6 +271,21 @@ async def _finish_interview(
     await message.answer(thanks, reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
 
     user_id = message.from_user.id if message.from_user else message.chat.id
+
+    # ── ИДЕМПОТЕНТНОСТЬ: не запускать пайплайн повторно ──────────────────────
+    # Если отчёт уже записан (двойное нажатие / повторный вызов), просто
+    # повторно отправляем готовый отчёт в HR-чат и выходим.
+    existing = await db.get_interview_session(session, session_id)
+    if existing and existing.get("report_decision"):
+        logger.info(
+            "_finish_interview: отчёт уже есть для session_id=%d user_id=%d, "
+            "пропускаем AI-пайплайн",
+            session_id, user_id,
+        )
+        await _send_hr_report(message.bot, session, session_id, user_id, form_data)
+        return
+    # ─────────────────────────────────────────────────────────────────────────
+
     try:
         app  = await db.get_latest_application(session, user_id)
         name = (app or {}).get("name", f"user#{user_id}")

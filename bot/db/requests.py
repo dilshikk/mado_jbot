@@ -660,7 +660,13 @@ async def save_interview_reports(
     personality: str | None = None,
     **_extra,
 ) -> None:
-    """Сохраняет результаты AI-пайплайна в сессию интервью."""
+    """Сохраняет результаты AI-пайплайна в сессию интервью.
+
+    Идемпотентна: если report_decision уже записан, повторный вызов
+    игнорируется и логируется предупреждение. Это защищает от двойного
+    запуска пайплайна при случайном нажатии кнопки "Завершить" дважды
+    и сохраняет аудит-трейл (первый результат не перезаписывается).
+    """
 
     def _to_json(val: "dict | str | None") -> str | None:
         if val is None:
@@ -672,6 +678,16 @@ async def save_interview_reports(
     obj = await session.get(InterviewSession, session_id)
     if not obj:
         return
+
+    # ── ИДЕМПОТЕНТНОСТЬ: не перезаписывать уже готовые отчёты ────────────────
+    if obj.report_decision:
+        logger.warning(
+            "save_interview_reports: session_id=%d уже содержит report_decision, "
+            "повторный вызов проигнорирован",
+            session_id,
+        )
+        return
+    # ─────────────────────────────────────────────────────────────────────────
 
     obj.status               = "done"
     obj.finished_at          = finished_at
