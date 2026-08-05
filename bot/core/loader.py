@@ -17,6 +17,7 @@ from bot.middlewares.localization import LangMiddleware
 from bot.handlers import errors
 from bot.handlers.admin import broadcast as admin_broadcast
 from bot.handlers.admin import vacancies as admin_vacancies
+from bot.handlers.admin import metro_stations as admin_metro
 from bot.handlers.hr import actions as hr
 from bot.handlers.hr import dashboard as hr_dashboard
 from bot.handlers.user import common as user
@@ -70,6 +71,7 @@ def create_dispatcher(storage: SQLStorage | None = None) -> Dispatcher:
     dp.include_router(hr_dashboard.router)
     dp.include_router(admin_broadcast.router)
     dp.include_router(admin_vacancies.router)
+    dp.include_router(admin_metro.router)
     dp.include_router(user.router)
     dp.include_router(form.router)
     # Новые шаги анкеты — после form, но до interview
