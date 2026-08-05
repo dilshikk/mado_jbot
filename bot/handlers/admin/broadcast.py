@@ -29,6 +29,16 @@ def _is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 
+def _admin_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Рассылка",            callback_data="admin:broadcast")],
+        [InlineKeyboardButton(text="👮 Список админов",      callback_data="admin:adminlist")],
+        [InlineKeyboardButton(text="💼 Вакансии",            callback_data="admin:vacancies")],
+        [InlineKeyboardButton(text="📊 Дашборд",             callback_data="admin:dashboard")],
+        [InlineKeyboardButton(text="📋 Resend (ввести ID)",  callback_data="admin:resend")],
+    ])
+
+
 def _preview_keyboard(has_url: bool) -> InlineKeyboardMarkup:
     rows = []
     if has_url:
@@ -53,14 +63,33 @@ def _url_keyboard(url: str | None, title: str) -> InlineKeyboardMarkup | None:
     ]])
 
 
+# ── /admin — главное меню ─────────────────────────────────────────────────────
+
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
         await message.answer("⛔️ У вас нет доступа к этой команде.")
         return
     await state.clear()
-    await state.set_state(Broadcast.waiting_photo)
     await message.answer(
+        f"🛠 <b>Панель администратора</b>\n{'─'*28}\n\n"
+        f"Выберите действие:",
+        parse_mode="HTML",
+        reply_markup=_admin_menu_keyboard(),
+    )
+
+
+# ── Обработчики кнопок меню ───────────────────────────────────────────────────
+
+@router.callback_query(F.data == "admin:broadcast")
+async def menu_broadcast(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+    await callback.answer()
+    await state.clear()
+    await state.set_state(Broadcast.waiting_photo)
+    await callback.message.answer(
         f"📢 <b>Создание рассылки</b>\n\n"
         f"<b>Шаг 1/4.</b> Отправьте фото для рассылки.\n"
         f"Или нажмите кнопку, чтобы пропустить.\n\n"
@@ -72,6 +101,92 @@ async def cmd_admin(message: Message, state: FSMContext) -> None:
     )
 
 
+@router.callback_query(F.data == "admin:adminlist")
+async def menu_adminlist(callback: CallbackQuery) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+    await callback.answer()
+    lines = [f"👮 <b>Список администраторов бота</b>\n{'─'*28}"]
+    for i, aid in enumerate(ADMIN_IDS, 1):
+        lines.append(f"{i}. <code>{aid}</code>")
+    await callback.message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin:vacancies")
+async def menu_vacancies(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+    await callback.answer()
+    # Импортируем вспомогательные функции из vacancies-модуля
+    from bot.handlers.admin.vacancies import _vacancy_list_text, _vacancies_keyboard  # noqa: PLC0415
+    vacancies = await db.get_all_vacancies(session)
+    await callback.message.answer(
+        _vacancy_list_text(vacancies),
+        parse_mode="HTML",
+        reply_markup=_vacancies_keyboard(vacancies),
+    )
+
+
+@router.callback_query(F.data == "admin:dashboard")
+async def menu_dashboard(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+    await callback.answer()
+    from bot.handlers.hr.dashboard import _send_dashboard  # noqa: PLC0415
+    await _send_dashboard(callback.message, session)
+
+
+@router.callback_query(F.data == "admin:resend")
+async def menu_resend_prompt(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+    await callback.answer()
+    await state.set_state(Broadcast.waiting_resend_id)
+    await callback.message.answer(
+        "📋 <b>Resend карточки кандидата</b>\n\n"
+        "Введите <b>Telegram ID</b> кандидата:",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="❌ Отмена", callback_data="admin:resend_cancel")
+        ]]),
+    )
+
+
+@router.callback_query(F.data == "admin:resend_cancel")
+async def menu_resend_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await callback.answer("Отменено")
+    await callback.message.answer(
+        "🛠 <b>Панель администратора</b>\n\nВыберите действие:",
+        parse_mode="HTML",
+        reply_markup=_admin_menu_keyboard(),
+    )
+
+
+@router.message(Broadcast.waiting_resend_id)
+async def menu_resend_execute(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    text = (message.text or "").strip()
+    if not text.isdigit():
+        await message.answer("❌ Введите числовой Telegram ID:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="❌ Отмена", callback_data="admin:resend_cancel")
+        ]]))
+        return
+    await state.clear()
+    # Делегируем в resend_candidate_card из dashboard
+    from bot.handlers.hr.dashboard import resend_candidate_card  # noqa: PLC0415
+    # Подменяем текст сообщения чтобы resend_candidate_card его распарсил
+    message.text = f"/resend {text}"
+    await resend_candidate_card(message, session)
+
+
+# ── /adminlist (прямая команда) ────────────────────────────────────────────────
+
 @router.message(Command("adminlist"))
 async def cmd_adminlist(message: Message) -> None:
     if not _is_admin(message.from_user.id):
@@ -81,6 +196,8 @@ async def cmd_adminlist(message: Message) -> None:
         lines.append(f"{i}. <code>{aid}</code>")
     await message.answer("\n".join(lines), parse_mode="HTML")
 
+
+# ── Broadcast FSM ─────────────────────────────────────────────────────────────
 
 @router.message(Broadcast.waiting_photo, F.photo)
 async def broadcast_got_photo(message: Message, state: FSMContext) -> None:
