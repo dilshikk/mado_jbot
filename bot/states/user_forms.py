@@ -11,7 +11,6 @@ class Form(StatesGroup):
     waiting_gender       = State()
     waiting_phone        = State()
     waiting_metro        = State()
-    waiting_citizenship  = State()
     waiting_languages    = State()
 
     # ── Информация о работе ──
