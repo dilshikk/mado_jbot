@@ -24,6 +24,7 @@ from bot.keyboards.reply import (
 from bot.keyboards.inline import (
     get_hr_action_keyboard,
     get_hr_hold_keyboard,
+    get_languages_inline_keyboard,
     get_metro_lines_keyboard,
     get_metro_stations_keyboard,
     get_post_interview_keyboard,
@@ -40,6 +41,7 @@ __all__ = [
     "get_med_book_keyboard", "get_languages_keyboard", "get_skip_cancel_keyboard",
     # Inline keyboards
     "get_hr_action_keyboard", "get_hr_hold_keyboard",
+    "get_languages_inline_keyboard",
     "get_metro_lines_keyboard", "get_metro_stations_keyboard",
     "get_post_interview_keyboard", "get_score_keyboard",
 ]
