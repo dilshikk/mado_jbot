@@ -4,18 +4,14 @@ from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemo
 
 from bot.lexicon import LOCALIZATION
 
-
 def _texts(lang: str) -> dict:
     return LOCALIZATION.get(lang, LOCALIZATION["ru"])
-
 
 def _btn(lang: str, key: str, fallback: str = "") -> KeyboardButton:
     return KeyboardButton(text=_texts(lang).get(key, fallback))
 
-
 def _row(*buttons: KeyboardButton) -> list[KeyboardButton]:
     return list(buttons)
-
 
 def get_language_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
@@ -24,7 +20,6 @@ def get_language_keyboard() -> ReplyKeyboardMarkup:
         one_time_keyboard=True,
         input_field_placeholder="Выберите язык / Tilni tanlang",
     )
-
 
 def get_main_menu(lang: str) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
@@ -39,19 +34,14 @@ def get_main_menu(lang: str) -> ReplyKeyboardMarkup:
         resize_keyboard=True,
     )
 
-
 def get_cancel_keyboard(lang: str) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[_row(_btn(lang, "btn_cancel", "❌ Отменить заполнение"))],
         resize_keyboard=True,
     )
 
-
 def get_skip_cancel_keyboard(lang: str) -> ReplyKeyboardMarkup:
-    """Клавиатура с кнопками «⏭ Пропустить» и «❌ Отменить».
-
-    Используется для шагов, где ответ не обязателен.
-    """
+    """Клавиатура с кнопками «⏭ Пропустить» и «❌ Отменить»."""
     return ReplyKeyboardMarkup(
         keyboard=[
             _row(_btn(lang, "btn_skip", "⏭ Пропустить")),
@@ -59,7 +49,6 @@ def get_skip_cancel_keyboard(lang: str) -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
     )
-
 
 def get_phone_keyboard(lang: str) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
@@ -73,7 +62,6 @@ def get_phone_keyboard(lang: str) -> ReplyKeyboardMarkup:
         resize_keyboard=True,
         input_field_placeholder="+998 XX XXX XX XX",
     )
-
 
 def get_positions_keyboard(lang: str, vacancies: list[dict]) -> ReplyKeyboardMarkup:
     """Клавиатура вакансий (передаётся список из БД — только активные)."""
@@ -91,7 +79,6 @@ def get_positions_keyboard(lang: str, vacancies: list[dict]) -> ReplyKeyboardMar
     keyboard.append(_row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")))
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
-
 def get_branch_keyboard(lang: str) -> ReplyKeyboardMarkup:
     branches = [
         "📍 MADO (Tashkent City Mall)",
@@ -104,7 +91,6 @@ def get_branch_keyboard(lang: str) -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
     )
-
 
 def get_gender_keyboard(lang: str) -> ReplyKeyboardMarkup:
     t = _texts(lang)
@@ -119,7 +105,6 @@ def get_gender_keyboard(lang: str) -> ReplyKeyboardMarkup:
         resize_keyboard=True,
     )
 
-
 def get_citizenship_keyboard(lang: str) -> ReplyKeyboardMarkup:
     t = _texts(lang)
     return ReplyKeyboardMarkup(
@@ -131,18 +116,16 @@ def get_citizenship_keyboard(lang: str) -> ReplyKeyboardMarkup:
         resize_keyboard=True,
     )
 
-
 def get_confirmation_keyboard(lang: str) -> ReplyKeyboardMarkup:
     t = _texts(lang)
     return ReplyKeyboardMarkup(
         keyboard=[
             _row(KeyboardButton(text=t.get("confirm_btn_yes", "✅ Всё верно"))),
-            _row(KeyboardButton(text=t.get("confirm_btn_no",  "🔄 Заполнить заново"))),
+            _row(KeyboardButton(text=t.get("confirm_btn_no", "🔄 Заполнить заново"))),
             _row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")),
         ],
         resize_keyboard=True,
     )
-
 
 def get_experience_keyboard(lang: str) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
@@ -161,7 +144,6 @@ def get_experience_keyboard(lang: str) -> ReplyKeyboardMarkup:
         resize_keyboard=True,
     )
 
-
 def get_experience_yn_keyboard(lang: str) -> ReplyKeyboardMarkup:
     t = _texts(lang)
     return ReplyKeyboardMarkup(
@@ -171,7 +153,6 @@ def get_experience_yn_keyboard(lang: str) -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
     )
-
 
 def get_readiness_keyboard(lang: str) -> ReplyKeyboardMarkup:
     t = _texts(lang)
@@ -186,7 +167,6 @@ def get_readiness_keyboard(lang: str) -> ReplyKeyboardMarkup:
         resize_keyboard=True,
     )
 
-
 def get_schedule_keyboard(lang: str) -> ReplyKeyboardMarkup:
     t = _texts(lang)
     return ReplyKeyboardMarkup(
@@ -200,7 +180,6 @@ def get_schedule_keyboard(lang: str) -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
     )
-
 
 def get_evening_shifts_keyboard(lang: str) -> ReplyKeyboardMarkup:
     t = _texts(lang)
@@ -217,7 +196,6 @@ def get_evening_shifts_keyboard(lang: str) -> ReplyKeyboardMarkup:
         resize_keyboard=True,
     )
 
-
 def get_weekends_keyboard(lang: str) -> ReplyKeyboardMarkup:
     t = _texts(lang)
     return ReplyKeyboardMarkup(
@@ -233,7 +211,6 @@ def get_weekends_keyboard(lang: str) -> ReplyKeyboardMarkup:
         resize_keyboard=True,
     )
 
-
 def get_smoking_keyboard(lang: str) -> ReplyKeyboardMarkup:
     t = _texts(lang)
     return ReplyKeyboardMarkup(
@@ -244,7 +221,6 @@ def get_smoking_keyboard(lang: str) -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
     )
-
 
 def get_med_book_keyboard(lang: str) -> ReplyKeyboardMarkup:
     t = _texts(lang)
@@ -261,7 +237,6 @@ def get_med_book_keyboard(lang: str) -> ReplyKeyboardMarkup:
         resize_keyboard=True,
     )
 
-
 def get_languages_keyboard(lang: str) -> ReplyKeyboardMarkup:
     t = _texts(lang)
     return ReplyKeyboardMarkup(
@@ -275,7 +250,6 @@ def get_languages_keyboard(lang: str) -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
     )
-
 
 def get_metro_keyboard(lang: str) -> ReplyKeyboardMarkup:
     metros_ru = [
@@ -296,6 +270,27 @@ def get_metro_keyboard(lang: str) -> ReplyKeyboardMarkup:
     keyboard.append(_row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")))
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
+def get_interview_keyboard(lang: str) -> ReplyKeyboardMarkup:
+    """Клавиатура во время AI-интервью.
+
+    Заменяет главное меню — кандидат видит только эти две кнопки.
+    После завершения интервью нужно вернуть get_main_menu().
+    """
+    if lang == "uz":
+        return ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="⏭ Savolni o'tkazish")],
+                [KeyboardButton(text="🚫 Intervyuni tugatish")],
+            ],
+            resize_keyboard=True,
+        )
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="⏭ Пропустить вопрос")],
+            [KeyboardButton(text="🚫 Завершить интервью")],
+        ],
+        resize_keyboard=True,
+    )
 
 def remove_keyboard() -> ReplyKeyboardRemove:
     return ReplyKeyboardRemove()
