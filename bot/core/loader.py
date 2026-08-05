@@ -3,7 +3,7 @@
 import asyncio
 from contextlib import suppress
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramAPIError
 from aiogram_sqlite_storage.sqlitestore import SQLStorage
 
@@ -34,8 +34,20 @@ async def handle_group_messages(message) -> None:
     )
 
 
-def create_dispatcher() -> Dispatcher:
-    storage = SQLStorage(db_path=settings.sqlite_path)
+def create_bot() -> Bot:
+    """Создаёт клиент Telegram Bot."""
+    return Bot(token=settings.bot_token)
+
+
+def create_storage() -> SQLStorage:
+    """Создаёт хранилище состояний FSM."""
+    return SQLStorage(db_path=settings.fsm_storage_path)
+
+
+def create_dispatcher(storage: SQLStorage | None = None) -> Dispatcher:
+    """Создаёт диспетчер и регистрирует middleware и роутеры."""
+    if storage is None:
+        storage = create_storage()
     dp = Dispatcher(storage=storage)
 
     # Middlewares
