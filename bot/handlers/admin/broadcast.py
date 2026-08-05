@@ -34,6 +34,7 @@ def _admin_menu_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📢 Рассылка",            callback_data="admin:broadcast")],
         [InlineKeyboardButton(text="👮 Список админов",      callback_data="admin:adminlist")],
         [InlineKeyboardButton(text="💼 Вакансии",            callback_data="admin:vacancies")],
+        [InlineKeyboardButton(text="🚇 Станции метро",       callback_data="admin:metro")],
         [InlineKeyboardButton(text="📊 Дашборд",             callback_data="admin:dashboard")],
         [InlineKeyboardButton(text="📋 Resend (ввести ID)",  callback_data="admin:resend")],
     ])
@@ -119,7 +120,6 @@ async def menu_vacancies(callback: CallbackQuery, session: AsyncSession) -> None
         await callback.answer()
         return
     await callback.answer()
-    # Импортируем вспомогательные функции из vacancies-модуля
     from bot.handlers.admin.vacancies import _vacancy_list_text, _vacancies_keyboard  # noqa: PLC0415
     vacancies = await db.get_all_vacancies(session)
     await callback.message.answer(
@@ -127,6 +127,16 @@ async def menu_vacancies(callback: CallbackQuery, session: AsyncSession) -> None
         parse_mode="HTML",
         reply_markup=_vacancies_keyboard(vacancies),
     )
+
+
+@router.callback_query(F.data == "admin:metro")
+async def menu_metro(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+    await callback.answer()
+    from bot.handlers.admin.metro_stations import show_metro_menu  # noqa: PLC0415
+    await show_metro_menu(callback.message, session)
 
 
 @router.callback_query(F.data == "admin:dashboard")
@@ -178,9 +188,7 @@ async def menu_resend_execute(message: Message, state: FSMContext, session: Asyn
         ]]))
         return
     await state.clear()
-    # Делегируем в resend_candidate_card из dashboard
     from bot.handlers.hr.dashboard import resend_candidate_card  # noqa: PLC0415
-    # Подменяем текст сообщения чтобы resend_candidate_card его распарсил
     message.text = f"/resend {text}"
     await resend_candidate_card(message, session)
 
