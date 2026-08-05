@@ -1,5 +1,7 @@
 # bot/keyboards/inline.py
 
+from datetime import datetime, timedelta
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.core.config import SHEET_URL
@@ -9,28 +11,17 @@ _EMPTY_USERNAME: frozenset[str] = frozenset({"отсутствует", "none", "
 # ─── Линии метро ─────────────────────────────────────────────
 # line_id → (emoji, name_ru, name_uz)
 METRO_LINES: dict[str, tuple[str, str, str]] = {
-    "red":    ("🔴", "Чиланзарская",          "Chilonzor"),
-    "blue":   ("🔵", "Узбекистанская",         "O'zbekiston"),
-    "green":  ("🟢", "Юнусабадская",           "Yunusobod"),
-    "orange": ("🟠", "30-летия Независимости", "30 yillik Mustaqillik"),
+    "red":    ("🔴", "Чиланзарская",             "Chilonzor"),
+    "blue":   ("🔵", "Узбекистанская",            "O'zbekiston"),
+    "green":  ("🟢", "Юнусабадская",              "Yunusobod"),
+    "orange": ("🟠", "30-летия Независимости",    "30 yillik Mustaqillik"),
 }
-
-# ─── Языки (ключ → (текст_ru, текст_uz)) ─────────────────────
-_LANGUAGES: dict[str, tuple[str, str]] = {
-    "ru":    ("🇷🇺 Русский",    "🇷🇺 Rus tili"),
-    "uz":    ("🇺🇿 Узбекский",  "🇺🇿 O'zbek tili"),
-    "en":    ("🇬🇧 Английский", "🇬🇧 Ingliz tili"),
-    "tr":    ("🇹🇷 Турецкий",   "🇹🇷 Turk tili"),
-    "other": ("🌐 Другой",      "🌐 Boshqa"),
-}
-
 
 def _skip_text(lang: str) -> str:
     return "O'tkazib yuborish" if lang == "uz" else "Пропустить"
 
 def _cancel_text(lang: str) -> str:
     return "Bekor qilish" if lang == "uz" else "Отменить заполнение"
-
 
 def get_metro_lines_keyboard(lang: str) -> InlineKeyboardMarkup:
     """Первый шаг — выбор линии метро."""
@@ -45,17 +36,12 @@ def get_metro_lines_keyboard(lang: str) -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton(text=_cancel_text(lang), callback_data="metro_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-
 def get_metro_stations_keyboard(
     stations: list[dict],
     line: str,
     lang: str,
 ) -> InlineKeyboardMarkup:
-    """Второй шаг — выбор станции на выбранной линии.
-
-    stations — список dict из БД (поля: id, name_ru, name_uz, sort_order).
-    По 2 станции в ряд.
-    """
+    """Второй шаг — выбор станции на выбранной линии."""
     name_key = "name_uz" if lang == "uz" else "name_ru"
     rows: list[list[InlineKeyboardButton]] = []
     pair: list[InlineKeyboardButton] = []
@@ -75,55 +61,6 @@ def get_metro_stations_keyboard(
     rows.append([InlineKeyboardButton(text=_cancel_text(lang), callback_data="metro_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-
-# ─── Языки владения (inline multiselect) ─────────────────────
-
-def get_languages_inline_keyboard(
-    lang: str,
-    selected: list[str],
-) -> InlineKeyboardMarkup:
-    """Inline-клавиатура мультиселекта языков.
-
-    selected — список уже выбранных ключей (например ['ru', 'en']).
-    Выбранные помечаются ✅, не выбранные — пустые.
-    """
-    rows: list[list[InlineKeyboardButton]] = []
-    pair: list[InlineKeyboardButton] = []
-
-    for key, (text_ru, text_uz) in _LANGUAGES.items():
-        label = text_uz if lang == "uz" else text_ru
-        check = "✅ " if key in selected else ""
-        pair.append(InlineKeyboardButton(
-            text=f"{check}{label}",
-            callback_data=f"lang_toggle:{key}",
-        ))
-        if len(pair) == 2:
-            rows.append(pair)
-            pair = []
-    if pair:
-        rows.append(pair)
-
-    # Кнопка «Готово» — активна только если хоть что-то выбрано
-    done_text = (
-        ("✅ Tayyor" if lang == "uz" else "✅ Готово")
-        if selected
-        else ("⬆️ Tanlang" if lang == "uz" else "⬆️ Выберите хотя бы один")
-    )
-    rows.append([InlineKeyboardButton(
-        text=done_text,
-        callback_data="lang_done" if selected else "lang_none",
-    )])
-    rows.append([InlineKeyboardButton(
-        text=_skip_text(lang),
-        callback_data="lang_skip",
-    )])
-    rows.append([InlineKeyboardButton(
-        text=_cancel_text(lang),
-        callback_data="metro_cancel",  # переиспользуем metro_cancel → общий отмены анкеты
-    )])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
 # ─── HR-клавиатуры ───────────────────────────────────────────
 
 def get_score_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
@@ -138,7 +75,7 @@ def get_post_interview_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🏆 Принять на работу", callback_data=f"hr_hire:{candidate_id}"),
-            InlineKeyboardButton(text="❌ Не подошёл",        callback_data=f"hr_reject:{candidate_id}"),
+            InlineKeyboardButton(text="❌ Не подошёл",         callback_data=f"hr_reject:{candidate_id}"),
         ],
         [InlineKeyboardButton(text="⏸ На паузу", callback_data=f"hr_hold:{candidate_id}")],
     ])
@@ -149,8 +86,8 @@ def get_hr_action_keyboard(phone: str, username: str, candidate_id: int) -> Inli
     if clean and clean not in _EMPTY_USERNAME:
         buttons.append([InlineKeyboardButton(text="💬 Telegram", url=f"https://t.me/{clean}")])
     buttons.append([
-        InlineKeyboardButton(text="✅ Одобрить",   callback_data=f"hr_accept:{candidate_id}"),
-        InlineKeyboardButton(text="❌ Отклонить",  callback_data=f"hr_reject:{candidate_id}"),
+        InlineKeyboardButton(text="✅ Одобрить",  callback_data=f"hr_accept:{candidate_id}"),
+        InlineKeyboardButton(text="❌ Отклонить", callback_data=f"hr_reject:{candidate_id}"),
     ])
     buttons.append([InlineKeyboardButton(text="⏸ На паузу", callback_data=f"hr_hold:{candidate_id}")])
     buttons.append([InlineKeyboardButton(text="📊 Google Таблица", url=SHEET_URL)])
@@ -161,3 +98,36 @@ def get_hr_hold_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="▶️ Вернуть в работу", callback_data=f"hr_accept:{candidate_id}"),
         InlineKeyboardButton(text="❌ Отклонить",         callback_data=f"hr_reject:{candidate_id}"),
     ]])
+
+def get_interview_schedule_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
+    """Inline-клавиатура быстрого выбора даты собеседования.
+
+    Показывает ближайшие 6 дней × 3 популярных времени (10:00, 14:00, 17:00).
+    HR может также ввести дату вручную — просто написать сообщением.
+    Кнопка «❌ Отмена» прерывает FSM без изменений.
+    """
+    today = datetime.now()
+    rows: list[list[InlineKeyboardButton]] = []
+
+    times = ["10:00", "14:00", "17:00"]
+    months_ru = [
+        "", "янв", "фев", "мар", "апр", "май", "июн",
+        "июл", "авг", "сен", "окт", "ноя", "дек",
+    ]
+
+    for day_offset in range(0, 6):
+        day = today + timedelta(days=day_offset)
+        label_date = f"{day.day} {months_ru[day.month]}"
+        row = []
+        for t in times:
+            label = f"{label_date} {t}"
+            # Передаём дату в формате ДД.ММ в callback чтобы парсер подхватил
+            value = f"{day.strftime('%d.%m')} в {t}"
+            row.append(InlineKeyboardButton(
+                text=label,
+                callback_data=f"hr_schedule:{candidate_id}:{value}",
+            ))
+        rows.append(row)
+
+    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data=f"hr_schedule_cancel:{candidate_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
