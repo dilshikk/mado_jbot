@@ -531,21 +531,43 @@ async def save_interview_reports(
     session: AsyncSession,
     session_id: int,
     finished_at: str,
-    resume: str | None = None,
+    # Поля пайплайна (JSON-словари → сериализуем в Text)
+    resume: "dict | str | None" = None,
+    communication: "dict | str | None" = None,
+    integrity: "dict | str | None" = None,
+    job_match: "dict | str | None" = None,
+    decision: "dict | str | None" = None,
+    total_score: float | None = None,
+    summary: str | None = None,
+    # Обратная совместимость со старыми вызовами
     skills: str | None = None,
     personality: str | None = None,
-    job_match: str | None = None,
-    summary: str | None = None,
+    **_extra,
 ) -> None:
-    """Сохраняет результаты всех AI-агентов в сессию интервью."""
+    """Сохраняет результаты AI-пайплайна в сессию интервью."""
+
+    def _to_json(val: "dict | str | None") -> str | None:
+        if val is None:
+            return None
+        if isinstance(val, dict):
+            return json.dumps(val, ensure_ascii=False)
+        return str(val)
+
     obj = await session.get(InterviewSession, session_id)
     if not obj:
         return
-    obj.status              = "done"
-    obj.finished_at         = finished_at
-    obj.report_resume       = resume
-    obj.report_skills       = skills
-    obj.report_personality  = personality
-    obj.report_job_match    = job_match
-    obj.report_summary      = summary
+
+    obj.status               = "done"
+    obj.finished_at          = finished_at
+    obj.report_resume        = _to_json(resume)
+    obj.report_communication = _to_json(communication)
+    obj.report_integrity     = _to_json(integrity)
+    obj.report_job_match     = _to_json(job_match)
+    obj.report_decision      = _to_json(decision)
+    obj.report_summary       = summary
+    obj.total_score          = total_score
+    # Обратная совместимость
+    obj.report_skills        = skills
+    obj.report_personality   = personality
+
     await session.commit()
