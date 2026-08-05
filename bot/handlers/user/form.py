@@ -233,8 +233,6 @@ async def process_confirmation(
     user = message.from_user
 
     # ── АТОМАРНОСТЬ: проверка статуса + INSERT защищены одним локом
-    # Гарантирует, что параллельный двойной тап / Telegram-ретрай не создадут
-    # две анкеты pending для одного user_id.
     is_admin = user.id in ADMIN_IDS
     if not is_admin:
         async with submission_lock(user.id):
@@ -260,14 +258,15 @@ async def _do_save_application(
     """Сохраняет анкету в БД, отправляет HR и благодарит кандидата."""
     bot: Bot = message.bot
 
-    # ── 1. Сохранение в БД ──
-    metro_station_id = data.get("metro_station_id")
+    # ── 1. Сохранение в БД — используем реальную сигнатуру save_application ──
     application_id = await db.save_application(
         session,
         user_id=user.id,
-        username=user.username or "",
-        data=data,
-        metro_station_id=metro_station_id,
+        name=data.get("name", ""),
+        birthday=data.get("birthday", ""),
+        phone=data.get("phone", ""),
+        position=data.get("position", ""),
+        experience=data.get("experience", "—"),
     )
 
     # ── 2. Подтверждение кандидату ──
@@ -312,7 +311,7 @@ async def _post_confirm_tasks(
     except Exception as e:
         logger.error("Ошибка записи в Google Sheets: %s", e, exc_info=True)
 
-    # ── 3. AI-скрининг (резюме + проверка честности) ──
+    # ── 3. AI-скрининг ──
     try:
         await screen_application(data)
     except Exception as e:
