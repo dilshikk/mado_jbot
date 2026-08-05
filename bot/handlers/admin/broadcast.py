@@ -40,6 +40,29 @@ def _admin_menu_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+# Кнопка отмены — используется на каждом шаге рассылки
+def _cancel_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="❌ Отменить рассылку", callback_data="broadcast:cancel"),
+    ]])
+
+
+# Шаг 1: пропустить фото + отмена
+def _photo_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏭ Без фото",           callback_data="broadcast:skip_photo")],
+        [InlineKeyboardButton(text="❌ Отменить рассылку",  callback_data="broadcast:cancel")],
+    ])
+
+
+# Шаг 3: пропустить ссылку + отмена
+def _url_skip_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏭ Без ссылки",         callback_data="broadcast:skip_url")],
+        [InlineKeyboardButton(text="❌ Отменить рассылку",  callback_data="broadcast:cancel")],
+    ])
+
+
 def _preview_keyboard(has_url: bool) -> InlineKeyboardMarkup:
     rows = []
     if has_url:
@@ -96,9 +119,7 @@ async def menu_broadcast(callback: CallbackQuery, state: FSMContext) -> None:
         f"Или нажмите кнопку, чтобы пропустить.\n\n"
         f"<i>Доступ: {len(ADMIN_IDS)} администратор(ов)</i>",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="⏭ Без фото", callback_data="broadcast:skip_photo")
-        ]]),
+        reply_markup=_photo_kb(),
     )
 
 
@@ -207,6 +228,7 @@ async def cmd_adminlist(message: Message) -> None:
 
 # ── Broadcast FSM ─────────────────────────────────────────────────────────────
 
+# Шаг 1: фото
 @router.message(Broadcast.waiting_photo, F.photo)
 async def broadcast_got_photo(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
@@ -226,12 +248,14 @@ async def broadcast_skip_photo(callback: CallbackQuery, state: FSMContext) -> No
     await _ask_caption(callback.message, state)
 
 
+# Шаг 2: текст
 async def _ask_caption(message: Message, state: FSMContext) -> None:
     await state.set_state(Broadcast.waiting_caption)
     await message.answer(
         "<b>Шаг 2/4.</b> Введите текст сообщения (поддерживается HTML).\n\n"
         "Например: <code>🔥 Новое меню уже доступно!</code>",
         parse_mode="HTML",
+        reply_markup=_cancel_kb(),
     )
 
 
@@ -244,19 +268,22 @@ async def broadcast_got_caption(message: Message, state: FSMContext) -> None:
     await message.answer(
         "<b>Шаг 3/4.</b> Отправьте URL-ссылку.\nИли пропустите.",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="⏭ Без ссылки", callback_data="broadcast:skip_url")
-        ]]),
+        reply_markup=_url_skip_kb(),
     )
 
 
+# Шаг 3: ссылка
 @router.message(Broadcast.waiting_url, F.text)
 async def broadcast_got_url(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
         return
     url = (message.text or "").strip()
     if not url.startswith("http"):
-        await message.answer("❌ Ссылка должна начинаться с <code>https://</code>", parse_mode="HTML")
+        await message.answer(
+            "❌ Ссылка должна начинаться с <code>https://</code>",
+            parse_mode="HTML",
+            reply_markup=_url_skip_kb(),
+        )
         return
     await state.update_data(url=url)
     await _ask_url_title(message, state)
@@ -272,11 +299,13 @@ async def broadcast_skip_url(callback: CallbackQuery, state: FSMContext, session
     await _show_preview(callback.message, state, session)
 
 
+# Шаг 4: название кнопки
 async def _ask_url_title(message: Message, state: FSMContext) -> None:
     await state.set_state(Broadcast.waiting_url_title)
     await message.answer(
         "<b>Шаг 4/4.</b> Введите название кнопки-ссылки.\nНапример: <code>Открыть меню</code>",
         parse_mode="HTML",
+        reply_markup=_cancel_kb(),
     )
 
 
@@ -288,6 +317,7 @@ async def broadcast_got_url_title(message: Message, state: FSMContext, session: 
     await _show_preview(message, state, session)
 
 
+# Предпросмотр
 async def _show_preview(message: Message, state: FSMContext, session: AsyncSession) -> None:
     data      = await state.get_data()
     photo_id  = data.get("photo_file_id")
@@ -308,36 +338,44 @@ async def _show_preview(message: Message, state: FSMContext, session: AsyncSessi
     await message.answer("Всё верно?", reply_markup=_preview_keyboard(has_url=bool(url)))
 
 
+# Редактирование из предпросмотра
 @router.callback_query(F.data.startswith("broadcast:edit:"), Broadcast.preview)
 async def broadcast_edit(callback: CallbackQuery, state: FSMContext) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer()
         return
     field = callback.data.split(":")[2]
-    state_map = {
-        "photo":   (Broadcast.waiting_photo,   "Отправьте новое фото:"),
-        "caption": (Broadcast.waiting_caption, "Введите новый текст:"),
-        "url":     (Broadcast.waiting_url,     "Введите новую ссылку:"),
+    state_map: dict[str, tuple] = {
+        "photo":   (Broadcast.waiting_photo,   "Отправьте новое фото:", _photo_kb()),
+        "caption": (Broadcast.waiting_caption, "Введите новый текст:",  _cancel_kb()),
+        "url":     (Broadcast.waiting_url,     "Введите новую ссылку:", _url_skip_kb()),
     }
-    new_state, prompt = state_map.get(field, (None, None))
-    if not new_state:
+    entry = state_map.get(field)
+    if not entry:
         await callback.answer()
         return
+    new_state, prompt, kb = entry
     await state.set_state(new_state)
-    await callback.message.answer(prompt)
+    await callback.message.answer(prompt, reply_markup=kb)
     await callback.answer()
 
 
+# Отмена — работает на любом этапе рассылки
 @router.callback_query(F.data == "broadcast:cancel")
 async def broadcast_cancel(callback: CallbackQuery, state: FSMContext) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer()
         return
     await state.clear()
-    await callback.message.answer("❌ Рассылка отменена.")
-    await callback.answer()
+    await callback.answer("Рассылка отменена")
+    await callback.message.answer(
+        "❌ <b>Рассылка отменена.</b>\n\nВозврат в панель администратора:",
+        parse_mode="HTML",
+        reply_markup=_admin_menu_keyboard(),
+    )
 
 
+# Отправка
 @router.callback_query(F.data == "broadcast:send", Broadcast.preview)
 async def broadcast_send(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     if not _is_admin(callback.from_user.id):
@@ -384,13 +422,16 @@ async def broadcast_send(callback: CallbackQuery, state: FSMContext, session: As
             logger.exception("Broadcast unexpected error user=%d: %s", user_id, e)
         if i % _PROGRESS_INTERVAL == 0 or i == total:
             with suppress(TelegramAPIError):
-                await progress_msg.edit_text(f"📤 Отправляю... {i} / {total}\n✅ {sent}  ❌ {failed}  🚫 {blocked}")
+                await progress_msg.edit_text(
+                    f"📤 Отправляю... {i} / {total}\n✅ {sent}  ❌ {failed}  🚫 {blocked}"
+                )
         await asyncio.sleep(_BROADCAST_DELAY)
 
     no_errors = failed == 0 and blocked == 0
     await progress_msg.edit_text(
         f"📊 <b>Рассылка завершена</b>\n{'─'*28}\n"
-        f"👥 Всего: <b>{total}</b>\n✅ Отправлено: <b>{sent}</b>\n🚫 Заблокировали: <b>{blocked}</b>\n❌ Ошибок: <b>{failed}</b>\n\n"
+        f"👥 Всего: <b>{total}</b>\n✅ Отправлено: <b>{sent}</b>\n"
+        f"🚫 Заблокировали: <b>{blocked}</b>\n❌ Ошибок: <b>{failed}</b>\n\n"
         f"{'✅ Без ошибок!' if no_errors else '⚠️ Часть сообщений не доставлена.'}",
         parse_mode="HTML",
     )
