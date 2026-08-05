@@ -7,6 +7,8 @@
 3. Пользователь выбирает станцию → metro_station_id сохраняется в FSM, диалог продолжается.
 4. «Назад» → возвращает к выбору линии.
 5. «Пропустить» → metro_station_id = None.
+6. «Отменить заполнение» → сброс анкеты и возврат в главное меню.
+Названия станций никогда не хранятся текстом — только metro_station_id.
 """
 
 import logging
@@ -49,7 +51,7 @@ async def ask_metro(message: Message, state: FSMContext, lang: str) -> None:
         )
 
 
-# ─── Callback: выбор линии ────────────────────────────────────────────────────
+# ─── Callback: выбор линии ───────────────────────────────────────
 
 @router.callback_query(Form.waiting_metro, F.data.startswith("metro_line:"))
 async def on_metro_line(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
@@ -91,7 +93,7 @@ async def on_metro_line(callback: CallbackQuery, state: FSMContext, session: Asy
         await callback.answer()
 
 
-# ─── Callback: выбор станции ──────────────────────────────────────────────────
+# ─── Callback: выбор станции ────────────────────────────────────
 
 @router.callback_query(Form.waiting_metro, F.data.startswith("metro_station:"))
 async def on_metro_station(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
@@ -123,7 +125,7 @@ async def on_metro_station(callback: CallbackQuery, state: FSMContext, session: 
     await _next_step(callback.message, state, session, lang)
 
 
-# ─── Callback: назад к линиям ─────────────────────────────────────────────────
+# ─── Callback: назад к линиям ────────────────────────────────────
 
 @router.callback_query(Form.waiting_metro, F.data == "metro_back")
 async def on_metro_back(callback: CallbackQuery, state: FSMContext) -> None:
@@ -138,7 +140,31 @@ async def on_metro_back(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
 
 
-# ─── Переход к следующему шагу (языки) ───────────────────────────────────────
+# ─── Callback: отмена заполнения анкеты ──────────────────────────────
+
+@router.callback_query(Form.waiting_metro, F.data == "metro_cancel")
+async def on_metro_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    """Отмена анкеты прямо с шага выбора метро."""
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
+
+    await state.clear()
+    await state.update_data(lang=lang)
+    logger.info("on_metro_cancel: user_id=%d cancelled form", callback.from_user.id)
+
+    with suppress(TelegramAPIError):
+        await callback.message.delete()
+    with suppress(TelegramAPIError):
+        await callback.message.answer(
+            LOCALIZATION[lang]["anketa_cancelled"],
+            reply_markup=kb.get_main_menu(lang),
+            parse_mode="HTML",
+        )
+    with suppress(TelegramAPIError):
+        await callback.answer()
+
+
+# ─── Переход к следующему шагу (языки) ────────────────────────────
 
 async def _next_step(message: Message, state: FSMContext, session: AsyncSession, lang: str) -> None:
     """После выбора метро → переход к выбору языков."""

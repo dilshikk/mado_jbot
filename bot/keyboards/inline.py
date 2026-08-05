@@ -6,7 +6,7 @@ from bot.core.config import SHEET_URL
 
 _EMPTY_USERNAME: frozenset[str] = frozenset({"отсутствует", "none", ""})
 
-# ─── Линии метро ─────────────────────────────────────────────────────────────
+# ─── Линии метро ─────────────────────────────────────────────
 # line_id → (emoji, name_ru, name_uz)
 METRO_LINES: dict[str, tuple[str, str, str]] = {
     "red":    ("🔴", "Чиланзарская",          "Chilonzor"),
@@ -25,8 +25,10 @@ def get_metro_lines_keyboard(lang: str) -> InlineKeyboardMarkup:
             text=f"{emoji} {name}",
             callback_data=f"metro_line:{line_id}",
         )])
-    skip_text = "⏭ O'tkazish" if lang == "uz" else "⏭ Пропустить"
-    rows.append([InlineKeyboardButton(text=skip_text, callback_data="metro_line:skip")])
+    skip_text   = "⏭ O'tkazish" if lang == "uz" else "⏭ Пропустить"
+    cancel_text = "❌ Bekor qilish" if lang == "uz" else "❌ Отменить заполнение"
+    rows.append([InlineKeyboardButton(text=skip_text,   callback_data="metro_line:skip")])
+    rows.append([InlineKeyboardButton(text=cancel_text, callback_data="metro_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -62,10 +64,13 @@ def get_metro_stations_keyboard(
     else:
         back_text = "⬅ Назад" if lang != "uz" else "⬅ Ortga"
     rows.append([InlineKeyboardButton(text=back_text, callback_data="metro_back")])
+
+    cancel_text = "❌ Bekor qilish" if lang == "uz" else "❌ Отменить заполнение"
+    rows.append([InlineKeyboardButton(text=cancel_text, callback_data="metro_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-# ─── HR-клавиатуры ────────────────────────────────────────────────────────────
+# ─── HR-клавиатуры ───────────────────────────────────────────
 
 def get_score_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
     """Кнопки оценки кандидата 1–5 звёзд."""
