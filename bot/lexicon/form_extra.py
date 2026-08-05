@@ -4,6 +4,7 @@
 EXTRA_RU = {
     # Кнопка пропустить (для inline-клавиатур)
     "btn_skip": "⏭ Пропустить",
+    "languages_done_empty": "Выберите хотя бы один язык или нажмите «⏭ Пропустить».",
 
     # Опыт работы — ветвление Да/Нет
     "ask_experience_yn": "💼 Есть ли у вас опыт работы?",
@@ -77,6 +78,7 @@ EXTRA_RU = {
 EXTRA_UZ = {
     # Кнопка пропустить
     "btn_skip": "⏭ O'tkazib yuborish",
+    "languages_done_empty": "Kamida bitta tilni tanlang yoki «⏭ O'tkazib yuborish» tugmasini bosing.",
 
     # Опыт работы — ветвление
     "ask_experience_yn": "💼 Sizda ish tajribasi bormi?",

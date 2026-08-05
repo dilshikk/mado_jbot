@@ -106,23 +106,12 @@ def get_gender_keyboard(lang: str) -> ReplyKeyboardMarkup:
     )
 
 
-def get_family_keyboard(lang: str) -> ReplyKeyboardMarkup:
-    t = _texts(lang)
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            _row(KeyboardButton(text=t.get("family_single",  "Холост/Не замужем"))),
-            _row(KeyboardButton(text=t.get("family_married", "Женат/Замужем"))),
-            _row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")),
-        ],
-        resize_keyboard=True,
-    )
-
-
 def get_citizenship_keyboard(lang: str) -> ReplyKeyboardMarkup:
     t = _texts(lang)
     return ReplyKeyboardMarkup(
         keyboard=[
             _row(KeyboardButton(text=t.get("citizenship_uzb", "🇺🇿 Узбекистан"))),
+            _row(_btn(lang, "citizenship_skip", "⏭ Пропустить")),
             _row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")),
         ],
         resize_keyboard=True,
@@ -266,11 +255,32 @@ def get_languages_keyboard(lang: str) -> ReplyKeyboardMarkup:
             _row(KeyboardButton(text=t["lang_opt_ru"]), KeyboardButton(text=t["lang_opt_uz"])),
             _row(KeyboardButton(text=t["lang_opt_en"]), KeyboardButton(text=t["lang_opt_tr"])),
             _row(KeyboardButton(text=t["lang_opt_other"])),
+            _row(_btn(lang, "languages_done", "✅ Готово")),
             _row(_btn(lang, "btn_skip", "⏭ Пропустить")),
             _row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")),
         ],
         resize_keyboard=True,
     )
+
+
+def get_metro_keyboard(lang: str) -> ReplyKeyboardMarkup:
+    metros_ru = [
+        "🚇 Буюк Ипак Йули", "🚇 Пушкин", "🚇 Хамида Алимджана",
+        "🚇 Абдулла Кадыри", "🚇 Алишер Навои", "🚇 Узбекистан",
+        "🚇 Космонавтов", "🚇 Ойбек", "🚇 Ташкент",
+        "🚇 Минор", "🚇 Бадамзар", "🚇 Мустакиллик майдони",
+    ]
+    metros_uz = [
+        "🚇 Buyuk Ipak Yo'li", "🚇 Pushkin", "🚇 Hamid Olimjon",
+        "🚇 Abdulla Qodiriy", "🚇 Alisher Navoiy", "🚇 O'zbekiston",
+        "🚇 Kosmonavtlar", "🚇 Oybek", "🚇 Toshkent",
+        "🚇 Minor", "🚇 Bodomzor", "🚇 Mustaqillik maydoni",
+    ]
+    metros = metros_uz if lang == "uz" else metros_ru
+    keyboard = [[KeyboardButton(text=name)] for name in metros]
+    keyboard.append(_row(_btn(lang, "metro_skip", "⏭ Пропустить")))
+    keyboard.append(_row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")))
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
 def remove_keyboard() -> ReplyKeyboardRemove:

@@ -22,6 +22,7 @@ router = Router()
 router.message.filter(IsPrivateChat())
 
 logger = logging.getLogger(__name__)
+MIN_QUESTIONS = 5
 
 _SKIP_KB_RU = InlineKeyboardMarkup(inline_keyboard=[[
     InlineKeyboardButton(text="⏭ Пропустить вопрос",   callback_data="interview:skip"),
@@ -117,6 +118,7 @@ async def start_interview(
         interview_lang=lang,
         interview_qa_log=[],
         interview_current_q=question,
+        interview_asked_questions=[question.casefold()],
     )
 
     intro = (
@@ -135,19 +137,27 @@ async def process_answer(message: Message, state: FSMContext, session: AsyncSess
     lang       = data.get("interview_lang", "ru")
     qa_log     = data.get("interview_qa_log", [])
     current_q  = data.get("interview_current_q", "")
+    asked_questions = data.get("interview_asked_questions", [])
 
     qa_log.append({"q": current_q, "a": (message.text or "").strip()})
     await db.append_qa(session, session_id, qa_log)
 
     step = await get_next_step(form_data=form_data, qa_log=qa_log, lang=lang)
-
-    if step.get("done"):
+    question = (step.get("question") or "").strip()
+    if len(qa_log) >= MIN_QUESTIONS and (step.get("done") or not question):
         await _finish_interview(message, state, session, session_id, form_data, lang, qa_log)
         return
+    if not question:
+        question = _fallback_question(lang, qa_log, asked_questions)
+    else:
+        normalized = question.casefold()
+        if normalized in asked_questions:
+            question = _fallback_question(lang, qa_log, asked_questions)
+        else:
+            asked_questions.append(normalized)
 
-    question = step["question"]
     await db.update_interview_session(session, session_id, q_count=len(qa_log) + 1)
-    await state.update_data(interview_qa_log=qa_log, interview_current_q=question)
+    await state.update_data(interview_qa_log=qa_log, interview_current_q=question, interview_asked_questions=asked_questions)
     await message.answer(f"🤖 <b>{question}</b>", parse_mode="HTML", reply_markup=_skip_kb(lang))
 
 
@@ -160,19 +170,28 @@ async def skip_question(callback: CallbackQuery, state: FSMContext, session: Asy
     lang       = data.get("interview_lang", "ru")
     qa_log     = data.get("interview_qa_log", [])
     current_q  = data.get("interview_current_q", "")
+    asked_questions = data.get("interview_asked_questions", [])
 
     skip_text = "— (пропущен)" if lang == "ru" else "— (o'tkazildi)"
     qa_log.append({"q": current_q, "a": skip_text})
     await db.append_qa(session, session_id, qa_log)
 
     step = await get_next_step(form_data=form_data, qa_log=qa_log, lang=lang)
-    if step.get("done"):
+    question = (step.get("question") or "").strip()
+    if len(qa_log) >= MIN_QUESTIONS and (step.get("done") or not question):
         await _finish_interview(callback.message, state, session, session_id, form_data, lang, qa_log)
         return
 
-    question = step["question"]
+    if not question:
+        question = _fallback_question(lang, qa_log, asked_questions)
+    else:
+        normalized = question.casefold()
+        if normalized in asked_questions:
+            question = _fallback_question(lang, qa_log, asked_questions)
+        else:
+            asked_questions.append(normalized)
     await db.update_interview_session(session, session_id, q_count=len(qa_log) + 1)
-    await state.update_data(interview_qa_log=qa_log, interview_current_q=question)
+    await state.update_data(interview_qa_log=qa_log, interview_current_q=question, interview_asked_questions=asked_questions)
     await callback.message.answer(f"🤖 <b>{question}</b>", parse_mode="HTML", reply_markup=_skip_kb(lang))
 
 
@@ -240,3 +259,28 @@ async def _finish_interview(
 
     # Отправляем отчёт в HR-чат
     await _send_hr_report(message.bot, session, session_id, message.chat.id)
+
+
+def _fallback_question(lang: str, qa_log: list[dict], asked_questions: list[str]) -> str:
+    pool_ru = [
+        "Почему вы хотите работать в MADO?",
+        "Расскажите о вашем опыте работы с гостями.",
+        "Как вы обычно работаете в команде?",
+        "Как вы ведёте себя в стрессовой ситуации на работе?",
+        "Какие у вас карьерные цели на ближайший год?",
+        "Какой ваш самый полезный навык для этой вакансии?",
+    ]
+    pool_uz = [
+        "Nega MADOda ishlamoqchisiz?",
+        "Mehmonlar bilan ishlash tajribangiz haqida aytib bering.",
+        "Jamoada odatda qanday ishlaysiz?",
+        "Ishdagi stressli vaziyatda o'zingizni qanday tutasiz?",
+        "Yaqin bir yil uchun karyera maqsadlaringiz qanday?",
+        "Bu vakansiya uchun eng foydali ko'nikmangiz qaysi?",
+    ]
+    pool = pool_uz if lang == "uz" else pool_ru
+    for question in pool:
+        if question.casefold() not in asked_questions:
+            asked_questions.append(question.casefold())
+            return question
+    return pool[min(len(qa_log), len(pool) - 1)]

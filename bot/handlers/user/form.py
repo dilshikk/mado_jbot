@@ -35,13 +35,14 @@ BLOCKING_STATUSES = {"pending", "accepted", "hired", "hold"}
 # Все активные шаги анкеты (waiting_for_lang исключён — там своя логика)
 _FORM_ACTIVE_STATES = (
     Form.waiting_branch, Form.waiting_position, Form.waiting_name,
-    Form.waiting_birthday, Form.waiting_gender, Form.waiting_family,
-    Form.waiting_citizenship, Form.waiting_address, Form.waiting_experience,
+    Form.waiting_birthday, Form.waiting_gender, Form.waiting_address,
+    Form.waiting_metro, Form.waiting_citizenship, Form.waiting_languages,
+    Form.waiting_phone, Form.waiting_experience,
     Form.waiting_exp_company, Form.waiting_exp_position, Form.waiting_exp_duration,
     Form.waiting_exp_duties, Form.waiting_readiness, Form.waiting_salary,
     Form.waiting_schedule, Form.waiting_evening_shifts, Form.waiting_weekends,
-    Form.waiting_smoking, Form.waiting_med_book, Form.waiting_languages,
-    Form.waiting_photo, Form.waiting_phone, Form.waiting_video, Form.waiting_confirmation,
+    Form.waiting_smoking, Form.waiting_med_book,
+    Form.waiting_photo, Form.waiting_video, Form.waiting_confirmation,
 )
 
 
@@ -169,28 +170,20 @@ async def process_gender(message: Message, state: FSMContext, lang: str) -> None
         await message.answer(LOCALIZATION[lang]["ask_gender"], reply_markup=kb.get_gender_keyboard(lang), parse_mode="HTML")
         return
     await state.update_data(gender=message.text)
-    await message.answer(LOCALIZATION[lang]["ask_family"], reply_markup=kb.get_family_keyboard(lang), parse_mode="HTML")
-    await state.set_state(Form.waiting_family)
-
-
-@router.message(Form.waiting_family)
-async def process_family(message: Message, state: FSMContext, lang: str) -> None:
-    if message.text not in {LOCALIZATION[lang]["family_single"], LOCALIZATION[lang]["family_married"]}:
-        await message.answer(LOCALIZATION[lang]["ask_family"], reply_markup=kb.get_family_keyboard(lang), parse_mode="HTML")
-        return
-    await state.update_data(family=message.text)
-    await message.answer(LOCALIZATION[lang]["ask_citizenship"], reply_markup=kb.get_citizenship_keyboard(lang), parse_mode="HTML")
-    await state.set_state(Form.waiting_citizenship)
+    await message.answer(LOCALIZATION[lang]["ask_address"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
+    await state.set_state(Form.waiting_address)
 
 
 @router.message(Form.waiting_citizenship)
 async def process_citizenship(message: Message, state: FSMContext, lang: str) -> None:
-    if not (message.text or "").strip():
+    text = (message.text or "").strip()
+    skip_value = LOCALIZATION[lang].get("citizenship_skip", LOCALIZATION[lang]["btn_skip"])
+    if not text:
         await message.answer(LOCALIZATION[lang]["ask_citizenship"], reply_markup=kb.get_citizenship_keyboard(lang), parse_mode="HTML")
         return
-    await state.update_data(citizenship=message.text)
-    await message.answer(LOCALIZATION[lang]["ask_address"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
-    await state.set_state(Form.waiting_address)
+    await state.update_data(citizenship=None if text == skip_value else text)
+    await message.answer(LOCALIZATION[lang]["ask_experience_yn"], reply_markup=kb.get_experience_yn_keyboard(lang), parse_mode="HTML")
+    await state.set_state(Form.waiting_experience)
 
 
 @router.message(Form.waiting_address)
@@ -199,12 +192,26 @@ async def process_address(message: Message, state: FSMContext, lang: str) -> Non
         await message.answer(LOCALIZATION[lang]["ask_address"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
         return
     await state.update_data(address=message.text)
-    await message.answer(
-        LOCALIZATION[lang]["ask_experience_yn"],
-        reply_markup=kb.get_experience_yn_keyboard(lang),
-        parse_mode="HTML",
-    )
-    await state.set_state(Form.waiting_experience)
+    await message.answer(LOCALIZATION[lang]["ask_metro"], reply_markup=kb.get_metro_keyboard(lang), parse_mode="HTML")
+    await state.set_state(Form.waiting_metro)
+
+
+@router.message(Form.waiting_metro)
+async def process_metro(message: Message, state: FSMContext, lang: str) -> None:
+    text = (message.text or "").strip()
+    skip_value = LOCALIZATION[lang].get("metro_skip", LOCALIZATION[lang]["btn_skip"])
+    valid_values = {
+        button.text
+        for row in kb.get_metro_keyboard(lang).keyboard
+        for button in row
+        if button.text != LOCALIZATION[lang]["btn_cancel"]
+    }
+    if text not in valid_values:
+        await message.answer(LOCALIZATION[lang]["ask_metro"], reply_markup=kb.get_metro_keyboard(lang), parse_mode="HTML")
+        return
+    await state.update_data(metro=None if text == skip_value else text)
+    await message.answer(LOCALIZATION[lang]["ask_citizenship"], reply_markup=kb.get_citizenship_keyboard(lang), parse_mode="HTML")
+    await state.set_state(Form.waiting_citizenship)
 
 
 @router.message(Form.waiting_phone)

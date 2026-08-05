@@ -33,9 +33,9 @@ TEXTS_UZ = {
     "ask_name":        "👤 <b>F.I.Sh.</b> ni to'liq kiriting:",
     "ask_birthday":    "📅 <b>Tug'ilgan sanangizni</b> DD.MM.YYYY formatida kiriting\nMasalan: <code>25.06.1995</code>",
     "ask_gender":      "🚻 <b>Jinsingizni</b> ko'rsating:",
-    "ask_family":      "💍 <b>Oilaviy ahvolingizni</b> ko'rsating:",
-    "ask_citizenship": "🔹 <b>Fuqaroligingizni</b> ko'rsating:",
+    "ask_citizenship": "🔹 <b>Fuqaroligingizni</b> ko'rsating yoki «⏭ O'tkazib yuborish» tugmasini bosing:",
     "ask_address":     "🏡 <b>Yashash manzilingizni</b> kiriting\n(shahar, tuman, ko'cha / kvartal):",
+    "ask_metro":       "🚇 <b>Eng yaqin metro</b>ni tanlang yoki «⏭ O'tkazib yuborish» tugmasini bosing:",
     "ask_phone":       "📱 <b>Telefon raqamingizni</b> yuboring:",
 
     # ── Ошибки валидации ──────────────────────────────────────────────────
@@ -51,9 +51,10 @@ TEXTS_UZ = {
     # ── Пол / Семья / Гражданство ─────────────────────────────────────────
     "gender_male":   "🚹 Erkak",
     "gender_female": "🚺 Ayol",
-    "family_single":  "💍 Bo'ydoq / Turmushga chiqmagan",
-    "family_married": "👨‍👩‍👦 Oila qurgan",
     "citizenship_uzb": "🇺🇿 O'zbekiston",
+    "metro_skip":      "⏭ O'tkazib yuborish",
+    "citizenship_skip":"⏭ O'tkazib yuborish",
+    "field_metro":     "Eng yaqin metro",
 
     # ── Вакансии ──────────────────────────────────────────────────────────
     "pos_cook":    "Oshpaz 👨‍🍳",
