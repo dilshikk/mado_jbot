@@ -1,33 +1,49 @@
 # bot/handlers/errors.py
+"""Глобальный обработчик необработанных исключений."""
 
 import logging
-from contextlib import suppress
 
-from aiogram import Bot, Router
-from aiogram.exceptions import TelegramAPIError
+from aiogram import Router
+from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter
 from aiogram.types import ErrorEvent
-
-from bot.core.config import ADMIN_CHAT_ID
 
 router = Router()
 logger = logging.getLogger(__name__)
 
+# Сетевые ошибки — временные, логируем только как WARNING без traceback
+_NETWORK_ERRORS = (
+    "Connection reset by peer",
+    "ClientOSError",
+    "ServerDisconnectedError",
+    "TimeoutError",
+    "ClientConnectorError",
+)
 
-@router.error()
-async def error_handler(event: ErrorEvent, bot: Bot) -> None:
-    """Глобальный обработчик необработанных ошибок."""
-    logger.exception(
+
+@router.errors()
+async def handle_errors(event: ErrorEvent) -> None:
+    exc = event.exception
+
+    # Flood control — aiogram сам обрабатывает, просто логируем
+    if isinstance(exc, TelegramRetryAfter):
+        logger.warning("Flood control: повтор через %d сек.", exc.retry_after)
+        return
+
+    # Сетевые разрывы — временно, не нужен traceback
+    if isinstance(exc, TelegramNetworkError):
+        msg = str(exc)
+        if any(e in msg for e in _NETWORK_ERRORS):
+            logger.warning(
+                "Сетевая ошибка (временная) при update_id=%s: %s",
+                getattr(event.update, "update_id", "?"),
+                msg,
+            )
+            return
+
+    # Всё остальное — полный traceback
+    logger.error(
         "Необработанная ошибка при обработке update_id=%s: %s",
-        event.update.update_id, event.exception,
-        exc_info=event.exception,
+        getattr(event.update, "update_id", "?"),
+        exc,
+        exc_info=exc,
     )
-    with suppress(TelegramAPIError):
-        await bot.send_message(
-            chat_id=ADMIN_CHAT_ID,
-            text=(
-                f"🔴 <b>Ошибка в боте</b>\n\n"
-                f"<code>{type(event.exception).__name__}: {event.exception}</code>\n\n"
-                f"update_id: <code>{event.update.update_id}</code>"
-            ),
-            parse_mode="HTML",
-        )
