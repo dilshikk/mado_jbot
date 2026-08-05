@@ -2,7 +2,7 @@
 """Дополнительные тексты для новых шагов анкеты."""
 
 EXTRA_RU = {
-    # Кнопка пропустить (для inline-клавиатур)
+    # Кнопка пропустить
     "btn_skip": "⏭ Пропустить",
     "languages_done_empty": "Выберите хотя бы один язык или нажмите «⏭ Пропустить».",
 
@@ -13,9 +13,9 @@ EXTRA_RU = {
 
     # Под-вопросы опыта
     "ask_exp_company":  "🏢 Где вы работали? (Название компании или организации)",
-    "ask_exp_position": "👔 Какую должность вы занимали?",
-    "ask_exp_duration": "⏱ Сколько времени вы там проработали?",
-    "ask_exp_duties":   "📋 Опишите ваши основные обязанности",
+    "ask_exp_position": "👔 Какую должность вы занимали?\n(или нажмите «⏭ Пропустить»)",
+    "ask_exp_duration": "⏱ Сколько времени вы там проработали?\n(или нажмите «⏭ Пропустить»)",
+    "ask_exp_duties":   "📋 Опишите ваши основные обязанности\n(или нажмите «⏭ Пропустить»)",
 
     # Готовность к работе
     "ask_readiness":        "📅 Когда вы готовы приступить к работе?",
@@ -26,7 +26,11 @@ EXTRA_RU = {
     "readiness_month":      "Через месяц",
 
     # Зарплатные ожидания
-    "ask_salary": "💰 Каковы ваши зарплатные ожидания?\n(Напишите сумму или диапазон, например: <code>3 000 000 – 5 000 000 сум</code>)",
+    "ask_salary": (
+        "💰 Каковы ваши зарплатные ожидания?\n"
+        "(Напишите сумму или диапазон, например: <code>3 000 000 – 5 000 000 сум</code>)\n"
+        "или нажмите «⏭ Пропустить»"
+    ),
 
     # График работы
     "ask_schedule":   "🗓 Какой график работы вам предпочтителен?",
@@ -70,9 +74,52 @@ EXTRA_RU = {
     "lang_opt_other": "Другое",
     "languages_done": "✅ Готово",
 
-    # Фото
+    # Фото и видео
     "ask_photo": "📸 Отправьте ваше <b>фото</b>\n(или нажмите «⏭ Пропустить»)",
-    "ask_video": "🎥 Отправьте <b>видео-визитку</b> (кружок или видео).\n⚠️ Минимум — <b>15 секунд</b>.\n(или нажмите «⏭ Пропустить»)",
+    "ask_video": (
+        "🎥 Отправьте <b>видео-визитку</b> (кружок или видео).\n"
+        "⚠️ Минимум — <b>15 секунд</b>.\n"
+        "(или нажмите «⏭ Пропустить»)"
+    ),
+
+    # ── Ошибки валидации ──────────────────────────────────────────────────
+    "bad_languages": (
+        "❌ Пожалуйста, выберите язык из списка\n"
+        "или нажмите «⏭ Пропустить» чтобы пропустить этот шаг."
+    ),
+    "bad_readiness": (
+        "❌ Пожалуйста, выберите один из предложенных вариантов."
+    ),
+    "bad_experience_yn": (
+        "❌ Пожалуйста, выберите «✅ Да» или «❌ Нет»."
+    ),
+    "bad_schedule": (
+        "❌ Пожалуйста, выберите график из предложенного списка."
+    ),
+    "bad_evening_shifts": (
+        "❌ Пожалуйста, выберите один из предложенных вариантов."
+    ),
+    "bad_weekends": (
+        "❌ Пожалуйста, выберите один из предложенных вариантов."
+    ),
+    "bad_smoking": (
+        "❌ Пожалуйста, выберите один из предложенных вариантов."
+    ),
+    "bad_med_book": (
+        "❌ Пожалуйста, выберите один из предложенных вариантов."
+    ),
+    "bad_photo": (
+        "❌ Пожалуйста, отправьте фотографию\n"
+        "или нажмите «⏭ Пропустить» чтобы пропустить этот шаг."
+    ),
+    "bad_video": (
+        "❌ Пожалуйста, отправьте видео или видео-кружок\n"
+        "или нажмите «⏭ Пропустить» чтобы пропустить этот шаг."
+    ),
+    "bad_video_short": (
+        "❌ Видео слишком короткое ({duration} сек).\n"
+        "Нужно минимум <b>{min_duration} секунд</b>. Попробуйте ещё раз."
+    ),
 }
 
 EXTRA_UZ = {
@@ -87,9 +134,9 @@ EXTRA_UZ = {
 
     # Под-вопросы опыта
     "ask_exp_company":  "🏢 Qayerda ishlagansiz? (Kompaniya yoki tashkilot nomi)",
-    "ask_exp_position": "👔 Qanday lavozimda ishlagansiz?",
-    "ask_exp_duration": "⏱ Qancha vaqt u yerda ishladingiz?",
-    "ask_exp_duties":   "📋 Asosiy vazifalaringizni tavsiflang",
+    "ask_exp_position": "👔 Qanday lavozimda ishlagansiz?\n(yoki «⏭ O'tkazib yuborish» tugmasini bosing)",
+    "ask_exp_duration": "⏱ Qancha vaqt u yerda ishladingiz?\n(yoki «⏭ O'tkazib yuborish» tugmasini bosing)",
+    "ask_exp_duties":   "📋 Asosiy vazifalaringizni tavsiflang\n(yoki «⏭ O'tkazib yuborish» tugmasini bosing)",
 
     # Готовность
     "ask_readiness":       "📅 Ishga qachon tayyor bo'lasiz?",
@@ -100,7 +147,11 @@ EXTRA_UZ = {
     "readiness_month":     "Bir oydan so'ng",
 
     # Зарплата
-    "ask_salary": "💰 Ish haqi bo'yicha kutishlaringiz qanday?\n(Miqdor yoki oraliq yozing, masalan: <code>3 000 000 – 5 000 000 so'm</code>)",
+    "ask_salary": (
+        "💰 Ish haqi bo'yicha kutishlaringiz qanday?\n"
+        "(Miqdor yoki oraliq yozing, masalan: <code>3 000 000 – 5 000 000 so'm</code>)\n"
+        "yoki «⏭ O'tkazib yuborish» tugmasini bosing"
+    ),
 
     # График
     "ask_schedule":  "🗓 Qanday ish grafigini afzal ko'rasiz?",
@@ -144,7 +195,50 @@ EXTRA_UZ = {
     "lang_opt_other": "Boshqa",
     "languages_done": "✅ Tayyor",
 
-    # Фото
+    # Фото и видео
     "ask_photo": "📸 Rasmingizni yuboring\n(yoki «⏭ O'tkazib yuborish» tugmasini bosing)",
-    "ask_video": "<b>Video-vizitka</b> yuboring (dumaloq yoki video).\n⚠️ Minimal — <b>15 soniya</b>.\n(yoki «⏭ O'tkazib yuborish» tugmasini bosing)",
+    "ask_video": (
+        "🎥 <b>Video-vizitka</b> yuboring (dumaloq yoki video).\n"
+        "⚠️ Minimal — <b>15 soniya</b>.\n"
+        "(yoki «⏭ O'tkazib yuborish» tugmasini bosing)"
+    ),
+
+    # ── Ошибки валидации ──────────────────────────────────────────────────
+    "bad_languages": (
+        "❌ Iltimos, ro'yxatdan tilni tanlang\n"
+        "yoki «⏭ O'tkazib yuborish» tugmasini bosib bu bosqichni o'tkazib yuboring."
+    ),
+    "bad_readiness": (
+        "❌ Iltimos, taklif etilgan variantlardan birini tanlang."
+    ),
+    "bad_experience_yn": (
+        "❌ Iltimos, «✅ Ha» yoki «❌ Yo'q» ni tanlang."
+    ),
+    "bad_schedule": (
+        "❌ Iltimos, taklif etilgan ro'yxatdan grafikni tanlang."
+    ),
+    "bad_evening_shifts": (
+        "❌ Iltimos, taklif etilgan variantlardan birini tanlang."
+    ),
+    "bad_weekends": (
+        "❌ Iltimos, taklif etilgan variantlardan birini tanlang."
+    ),
+    "bad_smoking": (
+        "❌ Iltimos, taklif etilgan variantlardan birini tanlang."
+    ),
+    "bad_med_book": (
+        "❌ Iltimos, taklif etilgan variantlardan birini tanlang."
+    ),
+    "bad_photo": (
+        "❌ Iltimos, rasm yuboring\n"
+        "yoki «⏭ O'tkazib yuborish» tugmasini bosib bu bosqichni o'tkazib yuboring."
+    ),
+    "bad_video": (
+        "❌ Iltimos, video yoki video-doira yuboring\n"
+        "yoki «⏭ O'tkazib yuborish» tugmasini bosib bu bosqichni o'tkazib yuboring."
+    ),
+    "bad_video_short": (
+        "❌ Video juda qisqa ({duration} s).\n"
+        "Minimal <b>{min_duration} soniya</b> kerak. Qayta urinib ko'ring."
+    ),
 }
