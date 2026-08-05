@@ -336,7 +336,8 @@ async def process_video(message: Message, state: FSMContext, lang: str) -> None:
         with suppress(TelegramAPIError):
             await message.answer(
                 LOCALIZATION[lang]["ask_video"],
-                reply_markup=kb.get_cancel_keyboard(lang),
+                # Видео необязательно — показываем кнопку «Пропустить»
+                reply_markup=kb.get_skip_cancel_keyboard(lang),
                 parse_mode="HTML",
             )
         return
@@ -358,7 +359,7 @@ async def process_video(message: Message, state: FSMContext, lang: str) -> None:
             with suppress(TelegramAPIError):
                 await message.answer(
                     LOCALIZATION[lang]["ask_video"],
-                    reply_markup=kb.get_cancel_keyboard(lang),
+                    reply_markup=kb.get_skip_cancel_keyboard(lang),
                     parse_mode="HTML",
                 )
             return
