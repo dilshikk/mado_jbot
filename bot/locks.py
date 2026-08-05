@@ -1,5 +1,5 @@
 # bot/locks.py
-"""\u0420еестры asyncio.Lock для защиты от TOCTOU-гонок.
+"""Реестры asyncio.Lock для защиты от TOCTOU-гонок.
 
 aiogram запускается в одном event-loop, поэтому process-local asyncio.Lock
 достаточно для сериализации критических секций внутри одного процесса
