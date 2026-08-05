@@ -28,9 +28,9 @@ logger = logging.getLogger(__name__)
 
 # Разделительные символы вынесены из f-строк: выражения в f-строках
 # не могут содержать обратный слеш до Python 3.12
-_SEP = "─"      # ─
-_STAR = "⭐"    # ⭐
-_FULL = "▓"     # ▓
+_SEP = "─"        # ─
+_STAR = "⭐"      # ⭐
+_FULL = "▓"       # ▓
 _EMPTY_BAR = "░"  # ░
 
 _STATUS_ICON: dict[str, str] = {
@@ -142,7 +142,7 @@ async def resend_candidate_card(message: Message, session: AsyncSession) -> None
     bot: Bot = message.bot
     app = await db.get_latest_application(session, candidate_id)
     if not app:
-        await message.answer(f"❌ Анкета для user_id={candidate_id} не найдено.")
+        await message.answer(f"❌ Анкета для user_id={candidate_id} не найдена.")
         return
     try:
         tg_user = await bot.get_chat(candidate_id)
