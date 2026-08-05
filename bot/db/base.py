@@ -129,6 +129,7 @@ async def init_db() -> None:
                     )
 
     await _seed_vacancies()
+    await _seed_metro_stations()
     logger.info("БД инициализирована: %s", settings.database_url)
 
 
@@ -158,3 +159,77 @@ async def _seed_vacancies() -> None:
             ))
         await session.commit()
     logger.info("Дефолтные вакансии добавлены (%d шт.).", len(defaults))
+
+
+async def _seed_metro_stations() -> None:
+    """Добавляет все станции метро Ташкента если таблица пуста.
+
+    Данные актуальны на 2025 год. 4 линии:
+      red    — Чиланзарская (15 станций)
+      blue   — Узбекистанская (11 станций)
+      green  — Юнусабадская (9 станций)
+      orange — 30-летия Независимости (5 станций)
+    """
+    from bot.db.models.metro_station import MetroStation
+
+    async with session_pool() as session:
+        count = await session.scalar(select(func.count(MetroStation.id)))
+        if count:
+            logger.info("Станции метро уже есть в БД (%d шт.), пропускаем.", count)
+            return
+
+        # (name_ru, name_uz, name_en, line, sort_order)
+        stations: list[tuple[str, str, str, str, int]] = [
+            # ── Красная линия (Чиланзарская) ──────────────────────────────────
+            ("Сергели",                "Sergeli",              "Sergeli",              "red",    1),
+            ("Янгихаёт",               "Yangi hayot",          "Yangi Hayot",          "red",    2),
+            ("Чиланзар",               "Chilonzor",            "Chilanzar",            "red",    3),
+            ("Бунёдкор",               "Bunyodkor",            "Bunyodkor",            "red",    4),
+            ("Миллий Бог",             "Milliy bog'",          "Milliy Bog",           "red",    5),
+            ("Новза",                  "Novza",                "Novza",                "red",    6),
+            ("Мирзо Улугбек",          "Mirzo Ulug'bek",       "Mirzo Ulugbek",        "red",    7),
+            ("Дустлик",                "Do'stlik",             "Dustlik",              "red",    8),
+            ("Буюк Ипак Йули",         "Buyuk Ipak Yo'li",     "Buyuk Ipak Yoli",      "red",    9),
+            ("Хамид Олимжон",          "Hamid Olimjon",        "Hamid Olimjon",        "red",   10),
+            ("Пахтакор",               "Paxtakor",             "Pakhtakor",            "red",   11),
+            ("Алишер Навои",           "Alisher Navoiy",       "Alisher Navoi",        "red",   12),
+            ("Космонавтлар",           "Kosmonavtlar",         "Kosmonavtlar",         "red",   13),
+            ("Дворец Дружбы Народов",  "Do'stlik saroyi",      "Palace of Friendship", "red",   14),
+            ("Мустакиллик Майдони",    "Mustaqillik maydoni",  "Independence Square",  "red",   15),
+            # ── Синяя линия (Узбекистанская) ──────────────────────────────────
+            ("Тошкент",                "Toshkent",             "Tashkent",             "blue",   1),
+            ("Минор",                  "Minor",                "Minor",                "blue",   2),
+            ("Пушкин",                 "Pushkin",              "Pushkin",              "blue",   3),
+            ("Амир Темур Хиёбони",     "Amir Temur Xiyoboni",  "Amir Temur Boulevard", "blue",   4),
+            ("Абдулла Кодирий",        "Abdulla Qodiriy",      "Abdulla Qadiri",       "blue",   5),
+            ("О'збекистон",            "O'zbekiston",          "Uzbekistan",           "blue",   6),
+            ("Беруний",                "Beruniy",              "Beruni",               "blue",   7),
+            ("Машинасозлар",           "Mashinasozlar",        "Mashinasozlar",        "blue",   8),
+            ("Дустлик 2",              "Do'stlik 2",           "Dustlik 2",            "blue",   9),
+            ("Академик Ёзувчи",        "Akademik Yozuvchi",    "Akademik Yozuvchi",    "blue",  10),
+            ("Кушберги",               "Qushbergi",            "Kushbergi",            "blue",  11),
+            # ── Зелёная линия (Юнусабадская) ──────────────────────────────────
+            ("Мингурик",               "Ming Urik",            "Ming Urik",            "green",  1),
+            ("Хабиб Абдуллаев",        "Habib Abdullayev",     "Habib Abdullayev",     "green",  2),
+            ("Тинчлик",                "Tinchlik",             "Tinchlik",             "green",  3),
+            ("Бодомзор",               "Bodomzor",             "Bodomzor",             "green",  4),
+            ("Амир Темур Хиёбони 2",   "Amir Temur Xiyoboni",  "Amir Temur Blvd 2",   "green",  5),
+            ("Юнусобод",               "Yunusobod",            "Yunusabad",            "green",  6),
+            ("Мирзо Улугбек 2",        "Mirzo Ulug'bek",       "Mirzo Ulugbek 2",      "green",  7),
+            ("Улмас Умаров",           "Ulmas Umarov",         "Ulmas Umarov",         "green",  8),
+            ("Каракамиш",              "Qorakomish",           "Karakamish",           "green",  9),
+            # ── Оранжевая линия (30-летия Независимости) ──────────────────────
+            ("Октябрьская",            "Oktyabr",              "October",              "orange", 1),
+            ("Чакар",                  "Chakar",               "Chakar",               "orange", 2),
+            ("Куйлюк",                 "Qo'yliq",              "Kuylyuk",              "orange", 3),
+            ("Эски Шаҳар",             "Eski shahar",          "Old City",             "orange", 4),
+            ("Коршинлик",              "Qo'rg'ontepa",         "Qorghontepa",          "orange", 5),
+        ]
+
+        for name_ru, name_uz, name_en, line, order in stations:
+            session.add(MetroStation(
+                name_ru=name_ru, name_uz=name_uz, name_en=name_en,
+                line=line, sort_order=order, active=1,
+            ))
+        await session.commit()
+    logger.info("Станции метро добавлены (%d шт.).", len(stations))
