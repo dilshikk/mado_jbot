@@ -67,44 +67,43 @@ def _base_context(form_data: dict, qa_log: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _extract_json(text: str) -> dict[str, Any] | None:
-    """Пытается извлечь dict из строки.
-
-    Порядок попыток:
-    1. json.loads на весь текст
-    2. json.loads на первый {...} фрагмент
-    3. ast.literal_eval — для Python-style ответов модели
-       (одинарные кавычки, True/False/None вместо true/false/null)
+def _extract_json(text: str) -> dict[str, Any]:
+    """Извлекает JSON из текста с тремя уровнями fallback:
+    1. json.loads на вырезанный блок {}
+    2. regex-чистка одиночных кавычек
+    3. ast.literal_eval (для Python-dict от CF Workers AI)
     """
-    # 1. Весь текст как JSON
+    # Вырезаем первый блок { ... }
+    start = text.find("{")
+    end   = text.rfind("}") + 1
+    if start == -1 or end <= start:
+        return {"error": "no_json", "raw": text[:500]}
+
+    chunk = text[start:end]
+
+    # Попытка 1: стандартный json.loads
     try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict):
-            return parsed
-    except (json.JSONDecodeError, ValueError):
+        return json.loads(chunk)
+    except json.JSONDecodeError:
         pass
 
-    # 2. Ищем первый {...} фрагмент
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match:
-        candidate = match.group()
+    # Попытка 2: заменяем одиночные кавычки → двойные (CF Workers AI иногда возвращает Python-dict)
+    try:
+        fixed = re.sub(r"(?<![\\])'", '"', chunk)
+        return json.loads(fixed)
+    except (json.JSONDecodeError, Exception):
+        pass
 
-        try:
-            parsed = json.loads(candidate)
-            if isinstance(parsed, dict):
-                return parsed
-        except (json.JSONDecodeError, ValueError):
-            pass
+    # Попытка 3: ast.literal_eval
+    try:
+        result = ast.literal_eval(chunk)
+        if isinstance(result, dict):
+            return result
+    except Exception:
+        pass
 
-        # 3. ast.literal_eval — CF Workers AI иногда возвращает Python-dict
-        try:
-            parsed = ast.literal_eval(candidate)
-            if isinstance(parsed, dict):
-                return parsed
-        except (ValueError, SyntaxError):
-            pass
-
-    return None
+    logger.warning("_extract_json: все попытки не удались, raw=%s", chunk[:200])
+    return {"error": "invalid_json", "raw": chunk[:500]}
 
 
 async def _run_json_agent(
@@ -116,7 +115,7 @@ async def _run_json_agent(
     """Запрашивает агента, всегда возвращает dict (никогда не кидает исключений)."""
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_content},
+        {"role": "user",   "content": user_content},
     ]
     try:
         result = await cf_chat(model, messages, max_tokens=max_tokens)
@@ -131,12 +130,7 @@ async def _run_json_agent(
         else:
             text = str(result)
 
-        parsed = _extract_json(text)
-        if parsed is not None:
-            return parsed
-
-        logger.warning("Агент не вернул JSON: %s", text[:200])
-        return {"error": "no_json", "raw": text[:500]}
+        return _extract_json(text)
 
     except Exception as exc:
         logger.error("Агент упал: %s", exc, exc_info=True)
@@ -152,10 +146,25 @@ def _compute_total_score(scores: dict[str, Any]) -> float:
         total += float(score) * weight
     return round(total, 2)
 
+
 def _is_language_sensitive(form_data: dict) -> bool:
     """Нужна ли оценка грамотности для данной позиции."""
     position = str(form_data.get("position") or form_data.get("должность", "")).lower()
     return any(p in position for p in _LANGUAGE_SENSITIVE_POSITIONS)
+
+
+def _to_str_list(value: object) -> list[str]:
+    """Безопасно приводит любое значение к списку строк для join/slice."""
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    if isinstance(value, (set, frozenset, tuple)):
+        return [str(v) for v in value]
+    if isinstance(value, dict):
+        return [str(k) for k in value]
+    if isinstance(value, str) and value:
+        return [value]
+    return []
+
 
 # ---------------------------------------------------------------------------
 # Основная точка входа
@@ -193,7 +202,7 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
             return {"error": "exception", "detail": str(val)}
         return val  # type: ignore[return-value]
 
-    comm_data = _safe_dict(comm_result)
+    comm_data      = _safe_dict(comm_result)
     integrity_data = _safe_dict(integrity_result)
 
     # ── Уровень 4: Job Match — получает Resume + Communication + Integrity ─
@@ -220,20 +229,20 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
 
     # Итоговый балл считается в Python по весам
     scores = decision_data.get("scores", {})
-    total = _compute_total_score(scores)
+    total  = _compute_total_score(scores)
     decision_data["total_score"] = total
 
     # ── Краткий текст для HR-чата (без AI, только Python) ─────────────────
     summary = _build_summary_text(resume_data, decision_data, job_match_data, integrity_data)
 
     return {
-        "resume": resume_data,
+        "resume":       resume_data,
         "communication": comm_data,
-        "integrity": integrity_data,
-        "job_match": job_match_data,
-        "decision": decision_data,
-        "total_score": total,
-        "summary": summary,
+        "integrity":    integrity_data,
+        "job_match":    job_match_data,
+        "decision":     decision_data,
+        "total_score":  total,
+        "summary":      summary,
     }
 
 # ---------------------------------------------------------------------------
@@ -246,15 +255,16 @@ _DECISION_LABELS = {
     "reject": "❌ Отклонить",
 }
 _PRIORITY_LABELS = {
-    "high": "🔴 Высокий",
+    "high":   "🔴 Высокий",
     "medium": "🟡 Средний",
-    "low": "🟢 Низкий",
+    "low":    "🟢 Низкий",
 }
 _RISK_LABELS = {
-    "low": "🟢 Низкий",
+    "low":    "🟢 Низкий",
     "medium": "🟡 Средний",
-    "high": "🔴 Высокий",
+    "high":   "🔴 Высокий",
 }
+
 
 def _build_summary_text(
     resume: dict,
@@ -266,15 +276,15 @@ def _build_summary_text(
     lines: list[str] = []
 
     # Кандидат
-    cand = resume.get("candidate", {})
-    name = cand.get("name", "—")
-    age = cand.get("age", "—")
-    position = cand.get("position", "—")
+    cand     = resume.get("candidate", {})
+    name     = cand.get("name", "—") if isinstance(cand, dict) else "—"
+    age      = cand.get("age", "—")  if isinstance(cand, dict) else "—"
+    position = cand.get("position", "—") if isinstance(cand, dict) else "—"
     lines.append(f"👤 {name}, {age} лет — {position}")
 
     # Итоговый балл
-    total = decision.get("total_score", 0)
-    decision_key = decision.get("decision", "")
+    total         = decision.get("total_score", 0)
+    decision_key  = decision.get("decision", "")
     decision_label = _DECISION_LABELS.get(decision_key, decision_key)
     lines.append(f"📊 Балл: {total}/10 | {decision_label}")
 
@@ -294,21 +304,21 @@ def _build_summary_text(
         lines.append(f"🛡 Риски: {_RISK_LABELS.get(risk, risk)}")
 
     # Причины решения
-    reasons = decision.get("reasons") or []
+    reasons = _to_str_list(decision.get("reasons"))
     if reasons:
         lines.append("\n Ключевые факты: ")
         for r in reasons[:4]:
-            lines.append(f" • {r}")
+            lines.append(f"  • {r}")
 
     # Вопросы для HR
-    questions = decision.get("questions_for_hr") or []
+    questions = _to_str_list(decision.get("questions_for_hr"))
     if questions:
         lines.append("\n Уточнить на очном интервью: ")
         for q in questions[:3]:
-            lines.append(f" ❓ {q}")
+            lines.append(f"  ❓ {q}")
 
-    # Скиллы
-    skills = resume.get("skills") or []
+    # Скиллы — безопасный срез через _to_str_list
+    skills = _to_str_list(resume.get("skills"))
     if skills:
         lines.append(f"\n Навыки: {', '.join(skills[:6])}")
 
