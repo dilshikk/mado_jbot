@@ -17,6 +17,7 @@ from bot.keyboards.reply import (
     get_readiness_keyboard,
     remove_keyboard,
     get_schedule_keyboard,
+    get_skip_cancel_keyboard,
     get_smoking_keyboard,
     get_weekends_keyboard,
 )
@@ -35,5 +36,5 @@ __all__ = [
     "get_metro_keyboard", "get_phone_keyboard", "get_positions_keyboard", "remove_keyboard",
     "get_experience_yn_keyboard", "get_readiness_keyboard", "get_schedule_keyboard",
     "get_evening_shifts_keyboard", "get_weekends_keyboard", "get_smoking_keyboard",
-    "get_med_book_keyboard", "get_languages_keyboard",
+    "get_med_book_keyboard", "get_languages_keyboard", "get_skip_cancel_keyboard",
 ]
