@@ -1,20 +1,12 @@
 # bot/handlers/user/interview.py
-"""FSM-хендлер AI-интервью с кандидатом.
-
-Новая логика:
-- анкета сохраняется в БД со статусом "interview_in_progress"
-- интервью запускается сразу после анкеты
-- в HR-группу отправляется ЕДИНЫЙ пакет только после статуса "completed"
-- при ошибке любого AI-агента — сообщение в HR не отправляется, задача помечается для повтора
-"""
+"""FSM-хендлер AI-интервью с кандидатом."""
 
 import json
 import logging
-from contextlib import suppress
 from datetime import datetime
 
 from aiogram import F, Router
-from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +17,6 @@ from bot.core.config import ADMIN_CHAT_ID
 from bot.db import requests as db
 from bot.filters.common import IsPrivateChat
 from bot.states import Interview
-from bot.utils.formatters import build_hr_resume_text
 
 router = Router()
 router.message.filter(IsPrivateChat())
@@ -38,151 +29,91 @@ _SKIP_KB_RU = InlineKeyboardMarkup(inline_keyboard=[[
     InlineKeyboardButton(text="🚫 Завершить интервью",  callback_data="interview:finish"),
 ]])
 _SKIP_KB_UZ = InlineKeyboardMarkup(inline_keyboard=[[
-    InlineKeyboardButton(text="⏭ Savolni o'tkazish",  callback_data="interview:skip"),
+    InlineKeyboardButton(text="⏭ Savolni o'tkazish",   callback_data="interview:skip"),
     InlineKeyboardButton(text="🚫 Intervyuni tugatish", callback_data="interview:finish"),
 ]])
-
 
 def _skip_kb(lang: str) -> InlineKeyboardMarkup:
     return _SKIP_KB_UZ if lang == "uz" else _SKIP_KB_RU
 
-
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+def _clean_username(raw: str | None) -> str:
+    """Возвращает @username или 'отсутствует' если username не задан.
 
-# ─── Отправка итогового пакета в HR-группу ───────────────────────────────────
+    Убирает лишние @ чтобы не было @@username.
+    """
+    if not raw:
+        return "отсутствует"
+    clean = raw.lstrip("@").strip()
+    # Telegram username: только буквы, цифры, подчёркивания, длина 5+
+    if not clean or len(clean) < 4 or not all(c.isalnum() or c == "_" for c in clean):
+        return "отсутствует"
+    return f"@{clean}"
 
-async def _send_hr_package(
+
+async def _send_hr_report(
     bot,
     session: AsyncSession,
     session_id: int,
     user_id: int,
-    form_data: dict,
+    form_data: dict | None = None,
 ) -> None:
-    """Формирует и отправляет ЕДИНЫЙ пакет кандидата в HR-группу.
-
-    Содержит:
-    - полную анкету
-    - ответы AI Interview (Q&A)
-    - резюме, навыки, коммуникацию, целостность, соответствие вакансии
-    - итоговое заключение и рейтинг
-    Фото и видео отправляются отдельными сообщениями после основного.
-    """
+    """Отправляет итоговый отчёт в HR-чат."""
     interview = await db.get_interview_session(session, session_id)
     if not interview:
-        logger.error("_send_hr_package: сессия %d не найдена", session_id)
         return
 
     app = await db.get_latest_application(session, user_id)
-    username = (app or {}).get("username") or f"user_{user_id}"
+    name = (app or {}).get("name", f"user#{user_id}")
 
-    # ── 1. Полная анкета ─────────────────────────────────────────────────────
-    anketa_block = build_hr_resume_text(form_data, user_id, username)
+    # Username берём из form_data (там он самый свежий, передаётся из message.from_user)
+    raw_username = (form_data or {}).get("username") or (app or {}).get("username")
+    username_str = _clean_username(raw_username)
 
-    # ── 2. Ответы интервью Q&A ───────────────────────────────────────────────
-    qa_block = ""
-    try:
-        qa_log: list[dict] = json.loads(interview.get("qa_log") or "[]")
-        if qa_log:
-            lines = ["\n\n🤖 <b>Ответы AI-интервью:</b>"]
-            for i, entry in enumerate(qa_log, 1):
-                q = entry.get("q", "")
-                a = entry.get("a", "")
-                lines.append(f"<b>{i}. {q}</b>\n   ➜ {a}")
-            qa_block = "\n".join(lines)
-    except Exception as e:
-        logger.warning("_send_hr_package: ошибка парсинга qa_log: %s", e)
+    header = (
+        f"🤖 AI-Отчёт по интервью \n"
+        f"{'─'*30}\n"
+        f"👤 {name} | user_id: {user_id} \n"
+        f"🔗 Username: {username_str}\n"
+        f"💼 {(app or {}).get('position', '—')}\n"
+        f"Вопросов задано: {interview['q_count']}\n"
+        f"{'─'*30}\n"
+    )
 
-    # ── 3. AI-анализ (summary уже содержит навыки, коммуникацию, решение) ───
-    ai_block = ""
+    # Основной блок — текстовый summary из Python-рендера
     summary = interview.get("report_summary") or ""
-    if summary:
-        ai_block = f"\n\n{'─'*30}\n🤖 <b>AI-анализ кандидата:</b>\n{summary}"
 
-    # ── 4. Итоговый балл и решение ───────────────────────────────────────────
+    # Hiring Decision — читаем из JSON
+    decision_raw   = interview.get("report_decision")
     decision_block = ""
-    decision_raw = interview.get("report_decision")
     if decision_raw:
         try:
-            dec = json.loads(decision_raw)
-            total         = dec.get("total_score", "—")
-            decision_key  = dec.get("decision", "")
-            _labels       = {"invite": "✅ Пригласить", "review": "⚠️ Рассмотреть", "reject": "❌ Отклонить"}
-            conf          = dec.get("confidence")
-            conf_str      = f"  (уверенность: {conf:.0%})" if isinstance(conf, float) else ""
-            priority_map  = {"high": "🔴 Высокий", "medium": "🟡 Средний", "low": "🟢 Низкий"}
-            priority      = priority_map.get(dec.get("priority", ""), "")
+            dec          = json.loads(decision_raw)
+            total        = dec.get("total_score", "—")
+            decision_key = dec.get("decision", "")
+            _labels      = {"invite": "✅ Пригласить", "review": "⚠️ Рассмотреть", "reject": "❌ Отклонить"}
+            conf         = dec.get("confidence", None)
+            conf_str     = f" (уверенность: {conf:.0%})" if isinstance(conf, float) else ""
             decision_block = (
-                f"\n\n{'─'*30}\n"
-                f"🏁 <b>Решение: {_labels.get(decision_key, decision_key)}</b>{conf_str}\n"
-                f"📊 Рейтинг: <b>{total}/10</b>\n"
+                f"\n 🏁 Решение: {_labels.get(decision_key, decision_key)} {conf_str}\n"
+                f"Балл: {total}/10 \n"
             )
-            if priority:
-                decision_block += f"🎯 Приоритет: {priority}\n"
-        except Exception as e:
-            logger.warning("_send_hr_package: ошибка парсинга report_decision: %s", e)
+        except Exception:
+            pass
 
-    # ── Собираем итоговый текст ──────────────────────────────────────────────
-    full_text = anketa_block + qa_block + ai_block + decision_block
+    full_text = header + summary + decision_block
 
-    # Telegram лимит 4096 символов
+    # Telegram: макс. 4096 символов
     if len(full_text) > 4000:
-        full_text = full_text[:3990] + "\n<i>…(обрезано)</i>"
+        full_text = full_text[:3990] + "\n …(обрезано) "
 
-    # ── Отправляем основное сообщение ────────────────────────────────────────
-    from bot import keyboards as kb  # noqa: PLC0415
-    hr_keyboard = kb.get_hr_action_keyboard(
-        phone=form_data.get("phone"),
-        username=username,
-        candidate_id=user_id,
-    )
     try:
-        hr_msg = await bot.send_message(
-            chat_id=ADMIN_CHAT_ID,
-            text=full_text,
-            reply_markup=hr_keyboard,
-            parse_mode="HTML",
-        )
-        logger.info("_send_hr_package: основное сообщение отправлено msg_id=%d", hr_msg.message_id)
+        await bot.send_message(chat_id=ADMIN_CHAT_ID, text=full_text, parse_mode="HTML")
     except Exception as e:
-        logger.error("_send_hr_package: ошибка отправки основного сообщения: %s", e)
-        return
+        logger.error("Ошибка отправки AI-отчёта в HR-чат: %s", e)
 
-    # ── Фото ────────────────────────────────────────────────────────────────
-    photo_id = form_data.get("photo")
-    if photo_id:
-        with suppress(TelegramAPIError):
-            await bot.send_photo(
-                chat_id=ADMIN_CHAT_ID,
-                photo=photo_id,
-                caption=f"📸 Фото кандидата: {form_data.get('name', '')}",
-                reply_to_message_id=hr_msg.message_id,
-            )
-
-    # ── Видео ────────────────────────────────────────────────────────────────
-    video_id = form_data.get("video_file_id")
-    if video_id:
-        try:
-            if form_data.get("is_video_note"):
-                video_msg = await bot.send_video_note(
-                    chat_id=ADMIN_CHAT_ID,
-                    video_note=video_id,
-                    reply_to_message_id=hr_msg.message_id,
-                )
-            else:
-                video_msg = await bot.send_video(
-                    chat_id=ADMIN_CHAT_ID,
-                    video=video_id,
-                    caption=f"🎥 Видео-визитка: {form_data.get('name', '')} (@{username})",
-                    reply_to_message_id=hr_msg.message_id,
-                )
-            await db.save_hr_video_msg_id(session, user_id, video_msg.message_id)
-        except Exception as e:
-            logger.error("_send_hr_package: ошибка отправки видео: %s", e)
-
-
-# ─── Запуск интервью ─────────────────────────────────────────────────────────
 
 async def start_interview(
     message: Message,
@@ -191,16 +122,9 @@ async def start_interview(
     form_data: dict,
     lang: str,
 ) -> None:
-    """Запускает интервью — вызывается из form.py после сохранения анкеты.
-
-    Статус анкеты меняется на "interview_in_progress".
-    В HR-группу НЕ отправляется ничего до завершения.
-    """
-    # Статус → интервью в процессе
-    await db.update_application_status(session, message.from_user.id, "interview_in_progress")
-
+    """Запускает интервью — вызывается из form.py после сохранения анкеты."""
     session_id = await db.create_interview_session(session, message.from_user.id)
-    step = await get_next_step(form_data=form_data, qa_log=[], lang=lang)
+    step       = await get_next_step(form_data=form_data, qa_log=[], lang=lang)
 
     if step.get("done"):
         await _finish_interview(message, state, session, session_id, form_data, lang)
@@ -220,21 +144,12 @@ async def start_interview(
     )
 
     intro = (
-        "🤖 <b>Recruiter AI</b>\n\n"
-        "Отлично! Теперь я задам вам несколько вопросов по вакансии, чтобы лучше вас узнать.\n\n"
+        "🤖 Recruiter AI \n\nОтлично! Теперь я задам вам несколько вопросов, чтобы лучше вас узнать.\n\n"
         if lang == "ru" else
-        "🤖 <b>Recruiter AI</b>\n\n"
-        "Juda yaxshi! Endi men sizga vakansiya bo'yicha bir necha savol beraman.\n\n"
+        "🤖 Recruiter AI \n\nJuda yaxshi! Endi men sizga bir necha savol beraman.\n\n"
     )
-    with suppress(TelegramAPIError):
-        await message.answer(
-            intro + f"<b>{question}</b>",
-            parse_mode="HTML",
-            reply_markup=_skip_kb(lang),
-        )
+    await message.answer(intro + f" {question} ", parse_mode="HTML", reply_markup=_skip_kb(lang))
 
-
-# ─── Обработка ответов ───────────────────────────────────────────────────────
 
 @router.message(Interview.answering)
 async def process_answer(message: Message, state: FSMContext, session: AsyncSession) -> None:
@@ -251,11 +166,9 @@ async def process_answer(message: Message, state: FSMContext, session: AsyncSess
 
     step     = await get_next_step(form_data=form_data, qa_log=qa_log, lang=lang)
     question = (step.get("question") or "").strip()
-
     if len(qa_log) >= MIN_QUESTIONS and (step.get("done") or not question):
         await _finish_interview(message, state, session, session_id, form_data, lang, qa_log)
         return
-
     if not question:
         question = _fallback_question(lang, qa_log, asked_questions)
     else:
@@ -271,14 +184,12 @@ async def process_answer(message: Message, state: FSMContext, session: AsyncSess
         interview_current_q=question,
         interview_asked_questions=asked_questions,
     )
-    with suppress(TelegramAPIError):
-        await message.answer(f"🤖 <b>{question}</b>", parse_mode="HTML", reply_markup=_skip_kb(lang))
+    await message.answer(f"🤖 {question} ", parse_mode="HTML", reply_markup=_skip_kb(lang))
 
 
 @router.callback_query(Interview.answering, F.data == "interview:skip")
 async def skip_question(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    with suppress(TelegramAPIError):
-        await callback.answer()
+    await callback.answer()
     data            = await state.get_data()
     session_id      = data.get("interview_session_id")
     form_data       = data.get("interview_form_data", {})
@@ -293,7 +204,6 @@ async def skip_question(callback: CallbackQuery, state: FSMContext, session: Asy
 
     step     = await get_next_step(form_data=form_data, qa_log=qa_log, lang=lang)
     question = (step.get("question") or "").strip()
-
     if len(qa_log) >= MIN_QUESTIONS and (step.get("done") or not question):
         await _finish_interview(callback.message, state, session, session_id, form_data, lang, qa_log)
         return
@@ -306,23 +216,18 @@ async def skip_question(callback: CallbackQuery, state: FSMContext, session: Asy
             question = _fallback_question(lang, qa_log, asked_questions)
         else:
             asked_questions.append(normalized)
-
     await db.update_interview_session(session, session_id, q_count=len(qa_log) + 1)
     await state.update_data(
         interview_qa_log=qa_log,
         interview_current_q=question,
         interview_asked_questions=asked_questions,
     )
-    with suppress(TelegramAPIError):
-        await callback.message.answer(
-            f"🤖 <b>{question}</b>", parse_mode="HTML", reply_markup=_skip_kb(lang),
-        )
+    await callback.message.answer(f"🤖 {question} ", parse_mode="HTML", reply_markup=_skip_kb(lang))
 
 
 @router.callback_query(Interview.answering, F.data == "interview:finish")
 async def force_finish(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    with suppress(TelegramAPIError):
-        await callback.answer()
+    await callback.answer()
     data       = await state.get_data()
     session_id = data.get("interview_session_id")
     form_data  = data.get("interview_form_data", {})
@@ -330,8 +235,6 @@ async def force_finish(callback: CallbackQuery, state: FSMContext, session: Asyn
     qa_log     = data.get("interview_qa_log", [])
     await _finish_interview(callback.message, state, session, session_id, form_data, lang, qa_log)
 
-
-# ─── Завершение интервью ─────────────────────────────────────────────────────
 
 async def _finish_interview(
     message: Message,
@@ -342,107 +245,62 @@ async def _finish_interview(
     lang: str,
     qa_log: list[dict] | None = None,
 ) -> None:
-    """Завершает интервью: запускает AI-пайплайн, отправляет единый пакет в HR.
-
-    Правила:
-    - В HR отправляется ТОЛЬКО после статуса "completed"
-    - При ошибке любого AI-агента: пакет НЕ отправляется, задача помечается для повтора
-    - Промежуточные сообщения в HR не отправляются
-    """
+    """Завершает интервью: запускает пайплайн, сохраняет, отправляет HR."""
     if qa_log is None:
         qa_log = []
 
     await state.clear()
-    user_id = message.from_user.id if message.from_user else message.chat.id
 
-    # Уведомляем кандидата
     thanks = (
-        "✅ <b>Интервью завершено!</b>\n\nСпасибо за ответы. HR-менеджер свяжется с вами в ближайшее время."
+        "✅ Интервью завершено! \n\nСпасибо за ответы. HR-менеджер свяжется с вами в ближайшее время."
         if lang == "ru" else
-        "✅ <b>Intervyu yakunlandi!</b>\n\nJavoblaringiz uchun rahmat. HR-menejer tez orada siz bilan bog'lanadi."
+        "✅ Intervyu yakunlandi! \n\nJavoblaringiz uchun rahmat. HR-menejer tez orada siz bilan bog'lanadi."
     )
-    with suppress(TelegramAPIError):
-        await message.answer(thanks, parse_mode="HTML")
+    await message.answer(thanks, parse_mode="HTML")
+
+    # Уведомляем HR что идёт обработка
+    user_id = message.from_user.id if message.from_user else message.chat.id
+    try:
+        app  = await db.get_latest_application(session, user_id)
+        name = (app or {}).get("name", f"user#{user_id}")
+        await message.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=f"⏳ AI обрабатывает интервью кандидата {name}...",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
 
     logger.info(
         "_finish_interview: запуск AI-пайплайна user_id=%d session_id=%d qa_count=%d",
         user_id, session_id, len(qa_log),
     )
 
-    # ── Запускаем 5-уровневый AI-пайплайн ───────────────────────────────────
-    reports: dict = {}
-    pipeline_failed = False
-    failed_agents: list[str] = []
-
+    # Запускаем пайплайн
     try:
         reports = await run_all_agents(form_data, qa_log)
     except Exception as e:
         logger.error("_finish_interview: AI-пайплайн упал: %s", e, exc_info=True)
-        pipeline_failed = True
-        failed_agents.append("pipeline")
-
-    # Проверяем что каждый агент вернул результат без ошибок
-    if not pipeline_failed:
-        agent_checks = {
-            "resume":        reports.get("resume"),
-            "communication": reports.get("communication"),
-            "integrity":     reports.get("integrity"),
-            "job_match":     reports.get("job_match"),
-            "decision":      reports.get("decision"),
-        }
-        for agent_name, result in agent_checks.items():
-            if result is None or (isinstance(result, dict) and "error" in result):
-                logger.error(
-                    "_finish_interview: агент %s вернул ошибку: %s", agent_name, result,
-                )
-                failed_agents.append(agent_name)
-
-    # ── Сохраняем результаты в БД ────────────────────────────────────────────
-    if not pipeline_failed:
-        try:
-            await db.save_interview_reports(
-                session,
-                session_id=session_id,
-                finished_at=_now(),
-                resume=reports.get("resume"),
-                communication=reports.get("communication"),
-                integrity=reports.get("integrity"),
-                job_match=reports.get("job_match"),
-                decision=reports.get("decision"),
-                total_score=reports.get("total_score"),
-                summary=reports.get("summary"),
-            )
-        except Exception as e:
-            logger.error("_finish_interview: ошибка сохранения отчётов: %s", e, exc_info=True)
-            pipeline_failed = True
-            failed_agents.append("db_save")
-
-    # ── Если есть ошибки — не отправляем в HR, помечаем для повтора ─────────
-    if failed_agents:
-        await db.update_interview_session(session, session_id, status="failed")
         await db.update_application_status(session, user_id, "interview_failed")
-        logger.error(
-            "_finish_interview: ПАКЕТ В HR НЕ ОТПРАВЛЕН. "
-            "Ошибки агентов: %s. user_id=%d session_id=%d. "
-            "Статус установлен 'interview_failed' для повторной обработки.",
-            failed_agents, user_id, session_id,
-        )
         return
 
-    # ── Устанавливаем статус "completed" ─────────────────────────────────────
-    await db.update_interview_session(session, session_id, status="completed")
-    await db.update_application_status(session, user_id, "pending")
-
-    logger.info(
-        "_finish_interview: интервью завершено, отправляем пакет в HR. user_id=%d session_id=%d",
-        user_id, session_id,
+    # Сохраняем в БД
+    await db.save_interview_reports(
+        session,
+        session_id=session_id,
+        finished_at=_now(),
+        resume=reports.get("resume"),
+        communication=reports.get("communication"),
+        integrity=reports.get("integrity"),
+        job_match=reports.get("job_match"),
+        decision=reports.get("decision"),
+        total_score=reports.get("total_score"),
+        summary=reports.get("summary"),
     )
 
-    # ── Отправляем ЕДИНЫЙ пакет в HR-группу ──────────────────────────────────
-    await _send_hr_package(message.bot, session, session_id, user_id, form_data)
+    # Отправляем отчёт в HR-чат (передаём form_data чтобы взять username)
+    await _send_hr_report(message.bot, session, session_id, user_id, form_data=form_data)
 
-
-# ─── Fallback-вопросы (если AI не ответил) ───────────────────────────────────
 
 def _fallback_question(lang: str, qa_log: list[dict], asked_questions: list[str]) -> str:
     pool_ru = [
@@ -466,4 +324,5 @@ def _fallback_question(lang: str, qa_log: list[dict], asked_questions: list[str]
         if question.casefold() not in asked_questions:
             asked_questions.append(question.casefold())
             return question
-    return pool[min(len(qa_log), len(pool) - 1)]
+    # Все вопросы исчерпаны — повторяем первый
+    return pool[0]
