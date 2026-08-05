@@ -95,6 +95,16 @@ async def get_metro_stations_by_line(session: AsyncSession, line: str) -> list[d
     return [_to_dict(s) for s in rows]
 
 
+async def get_all_metro_stations_by_line(session: AsyncSession, line: str) -> list[dict]:
+    """Возвращает ВСЕ станции (включая неактивные) заданной линии."""
+    rows = (await session.scalars(
+        select(MetroStation)
+        .where(MetroStation.line == line)
+        .order_by(MetroStation.sort_order, MetroStation.id)
+    )).all()
+    return [_to_dict(s) for s in rows]
+
+
 async def get_metro_station_by_id(session: AsyncSession, station_id: int) -> dict | None:
     """Возвращает станцию по ID или None."""
     station = await session.get(MetroStation, station_id)
@@ -113,6 +123,58 @@ async def get_metro_station_name(
     if not station:
         return "—"
     return station.name_uz if lang == "uz" else station.name_ru
+
+
+async def count_metro_stations(
+    session: AsyncSession,
+    active_only: bool = False,
+) -> int:
+    """Возвращает количество станций (всех или только активных)."""
+    q = select(func.count(MetroStation.id))
+    if active_only:
+        q = q.where(MetroStation.active == 1)
+    return (await session.scalar(q)) or 0
+
+
+async def add_metro_station(
+    session: AsyncSession,
+    name_ru: str,
+    name_uz: str,
+    line: str,
+) -> int:
+    """Добавляет новую станцию, возвращает её id."""
+    max_order = await session.scalar(
+        select(func.coalesce(func.max(MetroStation.sort_order), 0))
+        .where(MetroStation.line == line)
+    )
+    station = MetroStation(
+        name_ru=name_ru,
+        name_uz=name_uz,
+        line=line,
+        sort_order=(max_order or 0) + 1,
+        active=1,
+    )
+    session.add(station)
+    await session.commit()
+    return station.id
+
+
+async def toggle_metro_station(session: AsyncSession, station_id: int) -> bool:
+    """Переключает active 0↔1, возвращает новое значение."""
+    station = await session.get(MetroStation, station_id)
+    if not station:
+        return False
+    station.active = 1 - station.active
+    await session.commit()
+    return bool(station.active)
+
+
+async def delete_metro_station(session: AsyncSession, station_id: int) -> None:
+    """Удаляет станцию по ID."""
+    station = await session.get(MetroStation, station_id)
+    if station:
+        await session.delete(station)
+        await session.commit()
 
 
 # ── Пользователи ──────────────────────────────────────────────────────────────
@@ -566,7 +628,6 @@ async def save_interview_reports(
     session: AsyncSession,
     session_id: int,
     finished_at: str,
-    # Поля пайплайна (JSON-словари → сериализуем в Text)
     resume: "dict | str | None" = None,
     communication: "dict | str | None" = None,
     integrity: "dict | str | None" = None,
@@ -574,7 +635,6 @@ async def save_interview_reports(
     decision: "dict | str | None" = None,
     total_score: float | None = None,
     summary: str | None = None,
-    # Обратная совместимость со старыми вызовами
     skills: str | None = None,
     personality: str | None = None,
     **_extra,
@@ -601,7 +661,6 @@ async def save_interview_reports(
     obj.report_decision      = _to_json(decision)
     obj.report_summary       = summary
     obj.total_score          = total_score
-    # Обратная совместимость
     obj.report_skills        = skills
     obj.report_personality   = personality
 
