@@ -21,6 +21,7 @@ class Broadcast(StatesGroup):
     waiting_url_title = State()
     preview           = State()
     sending           = State()
+    waiting_resend_id = State()  # ввод ID кандидата для /resend через меню
 
 
 class AddVacancy(StatesGroup):
