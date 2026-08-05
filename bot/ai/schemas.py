@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Literal
+from typing import Any, Literal, Union
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -223,13 +223,13 @@ class PipelineResult(BaseModel):
 # Вспомогательная функция: безопасный парсинг
 # ═══════════════════════════════════════════════════════════════════════════════
 
-type _AgentModel = (
-    ResumeResult
-    | CommunicationResult
-    | IntegrityResult
-    | JobMatchResult
-    | DecisionResult
-)
+_AgentModel = Union[
+    ResumeResult,
+    CommunicationResult,
+    IntegrityResult,
+    JobMatchResult,
+    DecisionResult,
+]
 
 
 def parse_agent_result(
