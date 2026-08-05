@@ -16,6 +16,7 @@ from bot.core.config import ADMIN_CHAT_ID
 from bot.db import requests as db
 from bot.filters.common import IsPrivateChat
 from bot import keyboards as kb
+from bot.locks import interview_lock
 from bot.states import Interview
 
 router = Router()
@@ -118,8 +119,6 @@ async def start_interview(
 
     question = step["question"]
     await db.update_interview_session(session, session_id, q_count=1)
-
-    # Помечаем анкету как находящуюся в процессе AI-интервью
     await db.update_application_status(session, user_id, "interview_in_progress")
 
     await state.set_state(Interview.answering)
@@ -270,57 +269,58 @@ async def _finish_interview(
 
     user_id = message.from_user.id if message.from_user else message.chat.id
 
-    # ── ИДЕМПОТЕНТНОСТЬ: не запускать пайплайн повторно ──────────────────────
-    existing = await db.get_interview_session(session, session_id)
-    if existing and existing.get("report_decision"):
+    # ── АТОМАРНОСТЬ: проверка идемпотентности + run_all_agents в одном локе
+    # Защищает от двойного запуска AI-пайплайна при повторном Telegram-update.
+    async with interview_lock(session_id):
+        existing = await db.get_interview_session(session, session_id)
+        if existing and existing.get("report_decision"):
+            logger.info(
+                "_finish_interview: отчёт уже есть для session_id=%d user_id=%d, "
+                "пропускаем AI-пайплайн",
+                session_id, user_id,
+            )
+            await _send_hr_report(message.bot, session, session_id, user_id, form_data)
+            return
+
+        try:
+            app  = await db.get_latest_application(session, user_id)
+            name = (app or {}).get("name", f"user#{user_id}")
+            await message.bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=f"⏳ AI обрабатывает интервью кандидата {name}...",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
         logger.info(
-            "_finish_interview: отчёт уже есть для session_id=%d user_id=%d, "
-            "пропускаем AI-пайплайн",
-            session_id, user_id,
+            "_finish_interview: запуск AI-пайплайна user_id=%d session_id=%d qa_count=%d",
+            user_id, session_id, len(qa_log),
         )
-        await _send_hr_report(message.bot, session, session_id, user_id, form_data)
-        return
-    # ─────────────────────────────────────────────────────────────────────────
 
-    try:
-        app  = await db.get_latest_application(session, user_id)
-        name = (app or {}).get("name", f"user#{user_id}")
-        await message.bot.send_message(
-            chat_id=ADMIN_CHAT_ID,
-            text=f"⏳ AI обрабатывает интервью кандидата {name}...",
-            parse_mode="HTML",
+        try:
+            reports = await run_all_agents(form_data, qa_log)
+        except Exception as e:
+            logger.error("_finish_interview: AI-пайплайн упал: %s", e, exc_info=True)
+            await db.update_application_status(session, user_id, "interview_failed")
+            return
+
+        await db.save_interview_reports(
+            session,
+            session_id=session_id,
+            finished_at=_now(),
+            resume=reports.get("resume"),
+            communication=reports.get("communication"),
+            integrity=reports.get("integrity"),
+            job_match=reports.get("job_match"),
+            decision=reports.get("decision"),
+            total_score=reports.get("total_score"),
+            summary=reports.get("summary"),
         )
-    except Exception:
-        pass
 
-    logger.info(
-        "_finish_interview: запуск AI-пайплайна user_id=%d session_id=%d qa_count=%d",
-        user_id, session_id, len(qa_log),
-    )
+        await db.update_application_status(session, user_id, "screened")
 
-    try:
-        reports = await run_all_agents(form_data, qa_log)
-    except Exception as e:
-        logger.error("_finish_interview: AI-пайплайн упал: %s", e, exc_info=True)
-        await db.update_application_status(session, user_id, "interview_failed")
-        return
-
-    await db.save_interview_reports(
-        session,
-        session_id=session_id,
-        finished_at=_now(),
-        resume=reports.get("resume"),
-        communication=reports.get("communication"),
-        integrity=reports.get("integrity"),
-        job_match=reports.get("job_match"),
-        decision=reports.get("decision"),
-        total_score=reports.get("total_score"),
-        summary=reports.get("summary"),
-    )
-
-    # AI оценил кандидата — отчёт готов, ждёт решения HR
-    await db.update_application_status(session, user_id, "screened")
-
+    # Отправляем отчёт уже вне лока (только чтение, не запись)
     await _send_hr_report(message.bot, session, session_id, user_id, form_data=form_data)
 
 

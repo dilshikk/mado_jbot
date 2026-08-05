@@ -16,6 +16,7 @@ from bot.db import requests as db
 from bot.filters.common import IsCancelMessage, IsPrivateChat
 from bot import keyboards as kb
 from bot.lexicon import LOCALIZATION
+from bot.locks import submission_lock
 from bot.services.ai import screen_application
 from bot.services.gsheets import append_to_sheet
 from bot.states import Form
@@ -230,40 +231,24 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
 
     user = message.from_user
 
-    # Финальная защита от дублей (для не-админов)
+    # ── АТОМАРНОСТЬ: проверка статуса + INSERT защищены одним локом
+    # Гарантирует, что параллельный двойной тап / Telegram-ретрай не создадут
+    # две анкеты pending для одного user_id.
     is_admin = user.id in ADMIN_IDS
     if not is_admin:
-        status = await db.get_application_status(session, user.id)
-        if status in BLOCKING_STATUSES:
-            key = f"anketa_block_{status}"
-            text = LOCALIZATION[lang].get(key) or LOCALIZATION[lang]["anketa_block_pending"]
-            await message.answer(text, parse_mode="HTML")
-            await state.clear()
-            return
+        async with submission_lock(user.id):
+            status = await db.get_application_status(session, user.id)
+            if status in BLOCKING_STATUSES:
+                key = f"anketa_block_{status}"
+                block_text = LOCALIZATION[lang].get(key) or LOCALIZATION[lang]["anketa_block_pending"]
+                await message.answer(block_text, parse_mode="HTML")
+                await state.clear()
+                return
 
-    metro_station_id: int | None = None
-    metro_name = data.get("metro")
-    if metro_name:
-        # Название → ID: ищем по всем линиям
-        for line in ("red", "blue", "circle"):
-            stations = await db.get_metro_stations_by_line(session, line)
-            for s in stations:
-                if metro_name in (s.get("name_ru"), s.get("name_uz")):
-                    metro_station_id = s["id"]
-                    break
-            if metro_station_id:
-                break
+            app_id = await _do_save_application(session, user, data)
+    else:
+        app_id = await _do_save_application(session, user, data)
 
-    app_id = await db.save_application(
-        session,
-        user_id=user.id,
-        name=data.get("name", ""),
-        birthday=data.get("birthday", ""),
-        phone=data.get("phone", ""),
-        position=data.get("position", ""),
-        experience=data.get("experience") or "—",
-        metro_station_id=metro_station_id,
-    )
     logger.info("Анкета сохранена: app_id=%d user_id=%d", app_id, user.id)
 
     await state.clear()
@@ -274,6 +259,33 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
 
     # Дальнейшие шаги вынесены в фон (не блокируют подтверждение пользователя)
     asyncio.create_task(_post_confirm_tasks(message.bot, session, user, data, lang, app_id))
+
+
+async def _do_save_application(session: AsyncSession, user, data: dict) -> int:
+    """\u0421\u043e\u0445\u0440\u0430\u043d\u044f\u0435\u0442 \u0430\u043d\u043a\u0435\u0442\u0443 \u0432 \u0411\u0414. \u0412\u044b\u0437\u044b\u0432\u0430\u0435\u0442\u0441\u044f \u0432\u043d\u0443\u0442\u0440\u0438 submission_lock \u0438\u043b\u0438 \u0434\u043b\u044f \u0430\u0434\u043c\u0438\u043d\u0430."""
+    metro_station_id: int | None = None
+    metro_name = data.get("metro")
+    if metro_name:
+        for line in ("red", "blue", "circle"):
+            stations = await db.get_metro_stations_by_line(session, line)
+            for s in stations:
+                if metro_name in (s.get("name_ru"), s.get("name_uz")):
+                    metro_station_id = s["id"]
+                    break
+            if metro_station_id:
+                break
+
+    return await db.save_application(
+        session,
+        user_id=user.id,
+        name=data.get("name", ""),
+        birthday=data.get("birthday", ""),
+        phone=data.get("phone", ""),
+        position=data.get("position", ""),
+        experience=data.get("experience") or "—",
+        metro_station_id=metro_station_id,
+    )
+
 
 async def _post_confirm_tasks(
     bot: Bot,
@@ -306,17 +318,13 @@ async def _post_confirm_tasks(
     except Exception as e:
         logger.warning("Ошибка Google Sheets: %s", e)
 
-    # AI-скрининг
     try:
         await screen_application(bot, session, user.id, data)
     except Exception as e:
         logger.error("Ошибка AI-скрининга: %s", e, exc_info=True)
 
-    # Запуск интервью (import локальный, избегаюций циркулярный импорт)
     try:
         from bot.handlers.user.interview import start_interview  # noqa: PLC0415
-        from aiogram.fsm.context import FSMContext  # noqa: PLC0415
-        # Создаём заглушку-сообщение перед интервью
         await bot.send_message(
             chat_id=user.id,
             text=(
