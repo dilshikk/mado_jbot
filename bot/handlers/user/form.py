@@ -32,7 +32,7 @@ VALID_BRANCH = "Tashkent City Mall"
 
 # Статусы, при которых повторная подача анкеты запрещена (защита от дублей).
 # interview_in_progress — AI-интервью началось, кандидат ещё отвечает на вопросы.
-# screened     — AI завершил оценку, отчёт в HR-чате, ждёт решения человека.
+# screened — AI завершил оценку, отчёт в HR-чате, ждёт решения человека.
 # interview_failed не блокирует — кандидат может подать новую анкету.
 BLOCKING_STATUSES = {"pending", "interview_in_progress", "screened", "accepted", "hired", "hold"}
 
@@ -162,10 +162,8 @@ async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
     from bot.handlers.user.metro import ask_metro  # noqa: PLC0415
     await ask_metro(message, state, lang)
 
-
 # ВАЖНО: обработчик process_metro (reply-клавиатура) удалён.
 # Выбор станции метро полностью обрабатывается в metro.py через callback_query.
-
 
 # ── Раздел «Информация о работе»: должность → готовность → опыт → ... ──
 
@@ -245,42 +243,41 @@ async def process_confirmation(
                 key = f"anketa_block_{status}"
                 block_text = LOCALIZATION[lang].get(key) or LOCALIZATION[lang]["anketa_block_pending"]
                 await message.answer(block_text, parse_mode="HTML")
-                await state.clear()
                 return
-            app_id = await _do_save_application(session, user, data)
+            await _do_save_application(message, state, session, lang, data, user)
     else:
-        app_id = await _do_save_application(session, user, data)
-
-    logger.info("Анкета сохранена: app_id=%d user_id=%d", app_id, user.id)
-
-    await state.clear()
-    await state.update_data(lang=lang)
-
-    confirm_text = LOCALIZATION[lang]["anketa_confirmed"]
-    await message.answer(confirm_text, reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
-
-    # Фоновые задачи: HR-отправка, график, AI-скрининг, старт интервью
-    # Передаём message и state чтобы start_interview мог установить новый FSM-стейт.
-    asyncio.create_task(
-        _post_confirm_tasks(message.bot, session, user, data, lang, app_id, message, state)
-    )
+        await _do_save_application(message, state, session, lang, data, user)
 
 
-async def _do_save_application(session: AsyncSession, user, data: dict) -> int:
-    """Сохраняет анкету в БД. Вызывается внутри submission_lock или для админа."""
-    # metro_station_id сохраняется напрямую из inline-выбора в metro.py
-    metro_station_id: int | None = data.get("metro_station_id")
+async def _do_save_application(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    lang: str,
+    data: dict,
+    user,
+) -> None:
+    """Сохраняет анкету в БД, отправляет HR и благодарит кандидата."""
+    bot: Bot = message.bot
 
-    return await db.save_application(
+    # ── 1. Сохранение в БД ──
+    metro_station_id = data.get("metro_station_id")
+    application_id = await db.save_application(
         session,
         user_id=user.id,
-        name=data.get("name", ""),
-        birthday=data.get("birthday", ""),
-        phone=data.get("phone", ""),
-        position=data.get("position", ""),
-        experience=data.get("experience") or "—",
+        username=user.username or "",
+        data=data,
         metro_station_id=metro_station_id,
     )
+
+    # ── 2. Подтверждение кандидату ──
+    confirm_text = LOCALIZATION[lang]["anketa_confirmed"]
+    await state.clear()
+    await state.update_data(lang=lang)
+    await message.answer(confirm_text, reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
+
+    # ── 3. Фоновые задачи (HR-уведомление, Google Sheets, AI) ──
+    asyncio.create_task(_post_confirm_tasks(bot, session, user, data, application_id, lang))
 
 
 async def _post_confirm_tasks(
@@ -288,83 +285,35 @@ async def _post_confirm_tasks(
     session: AsyncSession,
     user,
     data: dict,
+    application_id: int,
     lang: str,
-    app_id: int,
-    message: Message,
-    state: FSMContext,
 ) -> None:
-    """Фоновые задачи после подтверждения: HR-отправка, график, AI-скрининг, старт интервью."""
-    # ── 1. HR-отправка новой анкеты ──
+    """Фоновые задачи после подтверждения анкеты: HR-сообщение, таблица, AI-скрининг."""
+
+    # ── 1. Отправка резюме в HR-чат ──
     try:
-        username_raw = user.username or LOCALIZATION["ru"]["none_text"]
-        resume_text = build_hr_resume_text(data, user.id, username_raw)
-        hr_keyboard = kb.get_hr_action_keyboard(
-            phone=data.get("phone", ""),
-            username=username_raw,
-            candidate_id=user.id,
-        )
+        resume_text = build_hr_resume_text(data, user)
         await bot.send_message(
-            chat_id=ADMIN_CHAT_ID,
-            text=resume_text,
-            reply_markup=hr_keyboard,
+            ADMIN_CHAT_ID,
+            resume_text,
             parse_mode="HTML",
         )
+        if data.get("photo_file_id"):
+            await bot.send_photo(ADMIN_CHAT_ID, data["photo_file_id"])
+        if data.get("video_file_id"):
+            send_fn = bot.send_video_note if data.get("is_video_note") else bot.send_video
+            await send_fn(ADMIN_CHAT_ID, data["video_file_id"])
     except Exception as e:
-        logger.error("Ошибка HR-отправки: %s", e, exc_info=True)
+        logger.error("Ошибка отправки резюме в HR-чат: %s", e, exc_info=True)
 
     # ── 2. Google Sheets ──
     try:
-        await append_to_sheet(data, user.id, user.username)
+        await append_to_sheet(data, user)
     except Exception as e:
-        logger.warning("Ошибка Google Sheets: %s", e)
+        logger.error("Ошибка записи в Google Sheets: %s", e, exc_info=True)
 
     # ── 3. AI-скрининг (резюме + проверка честности) ──
     try:
-        await screen_application(bot, session, user.id, data)
+        await screen_application(data)
     except Exception as e:
         logger.error("Ошибка AI-скрининга: %s", e, exc_info=True)
-
-    # ── 4. AI-интервью ──
-    # Импорт здесь а не на верху файла, чтобы избежать циклических зависимостей.
-    from bot.handlers.user.interview import start_interview  # noqa: PLC0415
-    try:
-        await start_interview(
-            message=message,
-            state=state,
-            session=session,
-            form_data=data,
-            lang=lang,
-        )
-    except Exception as e:
-        logger.error(
-            "Сбой start_interview user_id=%d: %s",
-            user.id, e, exc_info=True,
-        )
-        # ── fallback: сообщаем пользователю, что HR свяжется напрямую ──
-        fallback_text = (
-            "✅ Анкета принята! \n\n"
-            "Наш HR-менеджер рассмотрит её и свяжется с вами в ближайшее время."
-            if lang == "ru" else
-            "✅ Ariza qabul qilindi! \n\n"
-            "HR menejerimiz uni ko'rib chiqadi va tez orada siz bilan bog'lanadi."
-        )
-        try:
-            await bot.send_message(chat_id=user.id, text=fallback_text, parse_mode="HTML")
-        except Exception as notify_err:
-            logger.error("Ошибка отправки fallback-сообщения: %s", notify_err)
-
-        # ── уведомляем HR чтобы связались с кандидатом сами ──
-        hr_name = data.get("name") or f"user#{user.id}"
-        hr_phone = data.get("phone") or "—"
-        try:
-            await bot.send_message(
-                chat_id=ADMIN_CHAT_ID,
-                text=(
-                    f"⚠️ AI-интервью не запустилось — AI недоступен.\n"
-                    f"👤 {hr_name} | user_id: {user.id} | 📱 {hr_phone}\n\n"
-                    f"Свяжитесь с кандидатом напрямую."
-                ),
-                parse_mode="HTML",
-            )
-        except Exception as hr_err:
-            logger.error("Ошибка HR-уведомления о сбое интервью: %s", hr_err)
