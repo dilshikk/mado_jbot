@@ -10,7 +10,6 @@ class Form(StatesGroup):
     waiting_birthday     = State()
     waiting_gender       = State()
     waiting_phone        = State()
-    waiting_address      = State()
     waiting_metro        = State()
     waiting_citizenship  = State()
     waiting_languages    = State()
