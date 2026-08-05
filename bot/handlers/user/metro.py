@@ -86,7 +86,7 @@ async def on_metro_line(callback: CallbackQuery, state: FSMContext, session: Asy
         return
 
     from bot.keyboards.inline import METRO_LINES  # noqa: PLC0415
-    line_info = METRO_LINES.get(line, ("", "", ""))
+    line_info  = METRO_LINES.get(line, ("", "", ""))
     line_name  = line_info[2] if lang == "uz" else line_info[1]
     line_emoji = line_info[0]
 
@@ -144,9 +144,9 @@ async def on_metro_back(callback: CallbackQuery, state: FSMContext) -> None:
     with suppress(TelegramAPIError):
         await callback.answer()
 
-# ─── Callback: отмена анкеты (метро и языки) ─────────────────────
+# ─── Callback: отмена анкеты (метро и языки используют один callback) ────────
 
-@router.callback_query(F.data == "metro_cancel", F.data == "metro_cancel")
+@router.callback_query(F.data == "metro_cancel")
 async def on_cancel(callback: CallbackQuery, state: FSMContext) -> None:
     """Отмена анкеты с шага метро ИЛИ шага языков (оба используют metro_cancel)."""
     data = await state.get_data()
@@ -164,7 +164,7 @@ async def on_cancel(callback: CallbackQuery, state: FSMContext) -> None:
             reply_markup=kb.get_main_menu(lang),
             parse_mode="HTML",
         )
-    with suppress(TelemarkAPIError := TelegramAPIError):
+    with suppress(TelegramAPIError):
         await callback.answer()
 
 
