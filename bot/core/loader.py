@@ -3,8 +3,10 @@
 import asyncio
 from contextlib import suppress
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F, Router
 from aiogram.exceptions import TelegramAPIError
+from aiogram.filters import CommandStart
+from aiogram.types import Message
 from aiogram_sqlite_storage.sqlitestore import SQLStorage
 
 from bot.core.config import settings
@@ -23,11 +25,12 @@ from bot.handlers.user import form_extra
 from bot.handlers.user import interview as user_interview
 from bot.handlers.user import subscription
 
+# Роутер для групповых и супергрупповых чатов
+group_router = Router()
 
-async def handle_group_messages(message) -> None:
+@group_router.message(CommandStart(), F.chat.type.in_({"group", "supergroup"}))
+async def handle_group_start(message: Message) -> None:
     """Отвечает на /start в группах — редирект в личку."""
-    if not (message.text and message.text.startswith("/start")):
-        return
     bot_info = await message.bot.get_me()
     await message.answer(
         f"Для заполнения анкеты перейдите в личку: @{bot_info.username}"
@@ -60,6 +63,7 @@ def create_dispatcher(storage: SQLStorage | None = None) -> Dispatcher:
 
     # Routers — порядок важен!
     dp.include_router(errors.router)
+    dp.include_router(group_router)
     dp.include_router(subscription.router)
     dp.include_router(hr.router)
     dp.include_router(hr_dashboard.router)
