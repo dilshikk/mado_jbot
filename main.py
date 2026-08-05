@@ -23,7 +23,6 @@ from bot.utils.logger import setup_logging
 
 logger = logging.getLogger(__name__)
 
-
 async def on_startup(bot: Bot) -> None:
     await init_db()
     logger.info("БД инициализирована.")
@@ -36,7 +35,6 @@ async def on_startup(bot: Bot) -> None:
     bot_info = await bot.get_me()
     logger.info("Бот запущен: @%s (id=%d)", bot_info.username, bot_info.id)
 
-
 async def on_shutdown(bot: Bot) -> None:
     logger.warning("Бот останавливается...")
     with suppress(TelegramAPIError):
@@ -45,7 +43,6 @@ async def on_shutdown(bot: Bot) -> None:
             text="🔴 Бот MADO остановлен.",
             parse_mode="HTML",
         )
-
 
 async def main() -> None:
     setup_logging(settings.log_path, settings.log_level_int)
@@ -62,9 +59,9 @@ async def main() -> None:
         loop.add_signal_handler(sig, lambda: asyncio.create_task(dp.stop_polling()))
 
     scheduler = AsyncIOScheduler(timezone="Asia/Tashkent")
-    scheduler.add_job(send_interview_reminders,   "interval", minutes=30, args=[bot])
-    scheduler.add_job(notify_stale_applications,  "interval", hours=12,   args=[bot])
-    scheduler.add_job(auto_unblock_users,         "interval", hours=24,   args=[bot])
+    scheduler.add_job(send_interview_reminders, "interval", minutes=30, args=[bot])
+    scheduler.add_job(notify_stale_applications, "interval", hours=12, args=[bot])
+    scheduler.add_job(auto_unblock_users, "interval", hours=24, args=[bot])
     scheduler.start()
 
     # Автоповтор при временных сетевых ошибках
@@ -83,12 +80,14 @@ async def main() -> None:
                 "Сетевая ошибка polling: %s. Повтор через %d сек...", e, retry_delay
             )
             await asyncio.sleep(retry_delay)
-            retry_delay = min(retry_delay * 2, 60)  # экспоненциальный backoff, макс 60 сек
+            # Увеличиваем задержку после ошибки (экспоненциальный backoff, макс 60 сек)
+            retry_delay = min(retry_delay * 2, 60)
         except Exception as e:
             logger.exception("Критическая ошибка polling: %s", e)
             break
-        finally:
-            retry_delay = 5  # сброс после успешного подключения
+        else:
+            # Успешное завершение polling — сбрасываем задержку
+            retry_delay = 5
 
     # Graceful shutdown
     with suppress(Exception):
@@ -102,7 +101,6 @@ async def main() -> None:
     with suppress(Exception):
         await bot.session.close()
     logger.info("Бот корректно остановлен.")
-
 
 if __name__ == "__main__":
     asyncio.run(main())
