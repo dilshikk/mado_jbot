@@ -59,18 +59,15 @@ def _languages_prompt(lang: str) -> str:
 
 @router.callback_query(Form.waiting_languages, F.data.startswith("lang_toggle:"))
 async def languages_toggle(callback: CallbackQuery, state: FSMContext) -> None:
-    """Переключить выбор одного языка (добавить/убрать)."""
     await callback.answer()
     data = await state.get_data()
     lang = _lang(data)
     key = callback.data.split(":")[1]
-
     selected: list[str] = list(data.get("languages_selected", []))
     if key in selected:
         selected.remove(key)
     else:
         selected.append(key)
-
     await state.update_data(languages_selected=selected)
     await callback.message.edit_reply_markup(
         reply_markup=kb.get_languages_inline_keyboard(lang, selected),
@@ -79,16 +76,14 @@ async def languages_toggle(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(Form.waiting_languages, F.data == "lang_none")
 async def languages_none(callback: CallbackQuery, state: FSMContext) -> None:
-    """Нажали «Готово» без выбора — подсказка."""
     data = await state.get_data()
     lang = _lang(data)
-    msg = "Selezioa almeno una lingua" if lang == "uz" else "Выберите хотя бы один язык"
+    msg = "Kamida bitta tilni tanlang" if lang == "uz" else "Выберите хотя бы один язык"
     await callback.answer(msg, show_alert=True)
 
 
 @router.callback_query(Form.waiting_languages, F.data == "lang_skip")
 async def languages_skip(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    """Пропустить шаг языков."""
     await callback.answer()
     data = await state.get_data()
     lang = _lang(data)
@@ -99,24 +94,21 @@ async def languages_skip(callback: CallbackQuery, state: FSMContext, session: As
 
 @router.callback_query(Form.waiting_languages, F.data == "lang_done")
 async def languages_done(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    """Подтвердить выбранные языки и перейти к вакансии."""
     await callback.answer()
     data = await state.get_data()
     lang = _lang(data)
     selected: list[str] = data.get("languages_selected", [])
-
     _LABELS_RU = {"ru": "Русский", "uz": "Узбекский", "en": "Английский", "tr": "Турецкий", "other": "Другой"}
     _LABELS_UZ = {"ru": "Rus tili", "uz": "O'zbek tili", "en": "Ingliz tili", "tr": "Turk tili", "other": "Boshqa"}
     labels = _LABELS_UZ if lang == "uz" else _LABELS_RU
     readable = [labels.get(k, k) for k in selected]
-
     await state.update_data(languages=", ".join(readable), languages_selected=selected)
     await callback.message.edit_reply_markup(reply_markup=None)
     await _ask_position_after_languages(callback.message, state, session, lang)
 
 
 async def ask_languages(message: Message, state: FSMContext, lang: str) -> None:
-    """Отправляет вопрос о языках с inline-клавиатурой."""
+    """Отправляет вопрос о языках с inline-клавиатурой. Вызывается из metro.py."""
     await state.update_data(languages_selected=[])
     await state.set_state(Form.waiting_languages)
     await message.answer(
@@ -144,19 +136,17 @@ async def handle_readiness(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     lang = _lang(data)
     text = (message.text or "").strip()
-    valid = {value for value in (
-        _t(lang, "readiness_today"), _t(lang, "readiness_tomorrow"), _t(lang, "readiness_week"),
-        _t(lang, "readiness_two_weeks"), _t(lang, "readiness_month"), _skip_text(lang),
-    )}
+    valid = {
+        _t(lang, "readiness_today"), _t(lang, "readiness_tomorrow"),
+        _t(lang, "readiness_week"), _t(lang, "readiness_two_weeks"),
+        _t(lang, "readiness_month"), _skip_text(lang),
+    }
     if text not in valid:
         await message.answer(_t(lang, "ask_readiness"), reply_markup=kb.get_readiness_keyboard(lang))
         return
     await state.update_data(readiness=None if text == _skip_text(lang) else text)
     await state.set_state(Form.waiting_experience)
-    await message.answer(
-        _t(lang, "ask_experience_yn"),
-        reply_markup=kb.get_experience_yn_keyboard(lang),
-    )
+    await message.answer(_t(lang, "ask_experience_yn"), reply_markup=kb.get_experience_yn_keyboard(lang))
     logger.info("handle_readiness: user_id=%d readiness=%r", message.from_user.id, text)
 
 
@@ -167,25 +157,19 @@ async def handle_experience_yn(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     lang = _lang(data)
     text = (message.text or "").strip()
-
     if text == _t(lang, "exp_no"):
         await state.update_data(
             experience=_t(lang, "exp_no", "Нет"),
-            exp_company=None, exp_position=None,
-            exp_duration=None, exp_duties=None,
+            exp_company=None, exp_position=None, exp_duration=None, exp_duties=None,
         )
         await _ask_salary(message, state, lang)
     elif text == _t(lang, "exp_yes"):
         await state.update_data(experience=_t(lang, "exp_yes", "Да"))
         await state.set_state(Form.waiting_exp_company)
-        await message.answer(
-            _t(lang, "ask_exp_company"),
-            reply_markup=kb.get_cancel_keyboard(lang),
-        )
+        await message.answer(_t(lang, "ask_exp_company"), reply_markup=kb.get_cancel_keyboard(lang))
     else:
         await message.answer(_t(lang, "ask_experience_yn"), reply_markup=kb.get_experience_yn_keyboard(lang))
-        return
-    logger.info("handle_experience_yn: user_id=%d has_experience=%s", message.from_user.id, text == _t(lang, "exp_yes"))
+    logger.info("handle_experience_yn: user_id=%d", message.from_user.id)
 
 
 # ─── 4. Под-шаги опыта ────────────────────────────────────────────────────────
@@ -197,7 +181,6 @@ async def handle_exp_company(message: Message, state: FSMContext) -> None:
     await state.update_data(exp_company=(message.text or "").strip() or None)
     await state.set_state(Form.waiting_exp_position)
     await message.answer(_t(lang, "ask_exp_position"), reply_markup=kb.get_skip_cancel_keyboard(lang))
-    logger.info("handle_exp_company: user_id=%d company=%r", message.from_user.id, message.text)
 
 
 @router.message(Form.waiting_exp_position)
@@ -208,7 +191,6 @@ async def handle_exp_position(message: Message, state: FSMContext) -> None:
     await state.update_data(exp_position=None if text == _skip_text(lang) else text or None)
     await state.set_state(Form.waiting_exp_duration)
     await message.answer(_t(lang, "ask_exp_duration"), reply_markup=kb.get_skip_cancel_keyboard(lang))
-    logger.info("handle_exp_position: user_id=%d position=%r", message.from_user.id, text or None)
 
 
 @router.message(Form.waiting_exp_duration)
@@ -219,7 +201,6 @@ async def handle_exp_duration(message: Message, state: FSMContext) -> None:
     await state.update_data(exp_duration=None if text == _skip_text(lang) else text or None)
     await state.set_state(Form.waiting_exp_duties)
     await message.answer(_t(lang, "ask_exp_duties"), reply_markup=kb.get_skip_cancel_keyboard(lang))
-    logger.info("handle_exp_duration: user_id=%d duration=%r", message.from_user.id, text or None)
 
 
 @router.message(Form.waiting_exp_duties)
@@ -229,7 +210,6 @@ async def handle_exp_duties(message: Message, state: FSMContext) -> None:
     text = (message.text or "").strip()
     await state.update_data(exp_duties=None if text == _skip_text(lang) else text or None)
     await _ask_salary(message, state, lang)
-    logger.info("handle_exp_duties: user_id=%d duties=%r", message.from_user.id, text or None)
 
 
 # ─── 5. Зарплатные ожидания ──────────────────────────────────────────────────
@@ -238,7 +218,7 @@ async def _ask_salary(message: Message, state: FSMContext, lang: str) -> None:
     await state.set_state(Form.waiting_salary)
     await message.answer(
         _t(lang, "ask_salary"),
-        reply_markup=kb.get_skip_cancel_keyboard(lang),  # кнопка Пропустить
+        reply_markup=kb.get_skip_cancel_keyboard(lang),
         parse_mode="HTML",
     )
 
@@ -249,13 +229,11 @@ async def handle_salary(message: Message, state: FSMContext) -> None:
     lang = _lang(data)
     text = (message.text or "").strip()
 
-    # Пропустить
     if text == _skip_text(lang):
         await state.update_data(salary=None)
         await _ask_schedule(message, state, lang)
         return
 
-    # Валидация: принимаем только числа/диапазоны (не произвольный текст)
     if not _is_valid_salary(text):
         err = (
             "❌ Укажите сумму цифрами, например: <b>3 000 000</b> или <b>3 000 000 – 5 000 000</b>\n"
@@ -312,7 +290,7 @@ async def handle_evening_shifts(message: Message, state: FSMContext) -> None:
     await state.update_data(evening_shifts=None if text == _skip_text(lang) else text)
     await state.set_state(Form.waiting_weekends)
     await message.answer(_t(lang, "ask_weekends"), reply_markup=kb.get_weekends_keyboard(lang))
-    logger.info("handle_evening_shifts: user_id=%d evening_shifts=%r", message.from_user.id, text)
+    logger.info("handle_evening_shifts: user_id=%d", message.from_user.id)
 
 
 # ─── 8. Выходные и праздники ──────────────────────────────────────────────────
@@ -329,7 +307,7 @@ async def handle_weekends(message: Message, state: FSMContext) -> None:
     await state.update_data(weekends=None if text == _skip_text(lang) else text)
     await state.set_state(Form.waiting_smoking)
     await message.answer(_t(lang, "ask_smoking"), reply_markup=kb.get_smoking_keyboard(lang))
-    logger.info("handle_weekends: user_id=%d weekends=%r", message.from_user.id, text)
+    logger.info("handle_weekends: user_id=%d", message.from_user.id)
 
 
 # ─── 9. Курение ───────────────────────────────────────────────────────────────
@@ -346,4 +324,61 @@ async def handle_smoking(message: Message, state: FSMContext) -> None:
     await state.update_data(smoking=None if text == _skip_text(lang) else text)
     await state.set_state(Form.waiting_med_book)
     await message.answer(_t(lang, "ask_med_book"), reply_markup=kb.get_med_book_keyboard(lang))
-    logger.info("handle_smoking: user_id=%d smoking=%r", message.from_user.id, text)
+    logger.info("handle_smoking: user_id=%d", message.from_user.id)
+
+
+# ─── 10. Медицинская книжка ───────────────────────────────────────────────────
+
+@router.message(Form.waiting_med_book)
+async def handle_med_book(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    lang = _lang(data)
+    text = (message.text or "").strip()
+    valid = {
+        _t(lang, "med_book_yes"),
+        _t(lang, "med_book_no"),
+        _t(lang, "med_book_in_progress"),
+        _skip_text(lang),
+    }
+    if text not in valid:
+        await message.answer(_t(lang, "ask_med_book"), reply_markup=kb.get_med_book_keyboard(lang))
+        return
+    await state.update_data(med_book=None if text == _skip_text(lang) else text)
+    await state.set_state(Form.waiting_photo)
+    await message.answer(
+        _t(lang, "ask_photo"),
+        reply_markup=kb.get_skip_cancel_keyboard(lang),
+        parse_mode="HTML",
+    )
+    logger.info("handle_med_book: user_id=%d med_book=%r", message.from_user.id, text)
+
+
+# ─── 11. Фото кандидата ───────────────────────────────────────────────────────
+
+@router.message(Form.waiting_photo)
+async def handle_photo(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    lang = _lang(data)
+    text = (message.text or "").strip()
+
+    if text == _skip_text(lang):
+        await state.update_data(photo_file_id=None)
+    elif message.photo:
+        photo_id = message.photo[-1].file_id
+        await state.update_data(photo_file_id=photo_id)
+        logger.info("handle_photo: user_id=%d photo saved", message.from_user.id)
+    else:
+        await message.answer(
+            _t(lang, "bad_photo"),
+            reply_markup=kb.get_skip_cancel_keyboard(lang),
+            parse_mode="HTML",
+        )
+        return
+
+    await state.set_state(Form.waiting_video)
+    await message.answer(
+        _t(lang, "ask_video"),
+        reply_markup=kb.get_skip_cancel_keyboard(lang),
+        parse_mode="HTML",
+    )
+    logger.info("handle_photo: user_id=%d -> waiting_video", message.from_user.id)
