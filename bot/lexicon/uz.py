@@ -39,13 +39,31 @@ TEXTS_UZ = {
     "ask_phone":       "📱 <b>Telefon raqamingizni</b> yuboring:",
 
     # ── Ошибки валидации ──────────────────────────────────────────────────
+    "bad_name": (
+        "❌ Iltimos, to'g'ri F.I.Sh. kiriting.\n"
+        "Kamida 3 ta harf, faqat harflar."
+    ),
     "bad_birthday": (
         "❌ Sana formati noto'g'ri.\n"
         "<b>DD.MM.YYYY</b> formatida kiriting, masalan: <code>25.06.1995</code>"
     ),
-    "bad_name": (
-        "❌ Iltimos, to'g'ri F.I.Sh. kiriting.\n"
-        "Kamida 3 ta harf, faqat harflar."
+    "bad_age": (
+        "❌ Yosh <b>18 dan 60 yoshgacha</b> bo'lishi kerak.\n"
+        "Iltimos, to'g'ri tug'ilgan sanani kiriting."
+    ),
+    "bad_gender": (
+        "❌ Iltimos, taklif etilgan variantlardan jinsni tanlang."
+    ),
+    "bad_phone": (
+        "❌ Telefon raqami noto'g'ri.\n"
+        "«📱 Kontaktni yuborish» tugmasini bosing yoki qo'lda kiriting.\n"
+        "Masalan: <code>+998901234567</code>"
+    ),
+    "bad_metro": (
+        "❌ Iltimos, ro'yxatdan metro bekatini tanlang yoki «⏭ O'tkazib yuborish» tugmasini bosing."
+    ),
+    "bad_position": (
+        "❌ Iltimos, taklif etilgan ro'yxatdan vakansiyani tanlang."
     ),
 
     # ── Пол / Семья / Гражданство ─────────────────────────────────────────
