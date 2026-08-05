@@ -65,13 +65,13 @@ def _valid_position_labels(vacancies: list[dict]) -> set[str]:
 @router.message(StateFilter(*_FORM_ACTIVE_STATES), IsCancelMessage())
 @router.message(StateFilter(*_FORM_ACTIVE_STATES), Command("cancel"))
 async def cancel_form(message: Message, state: FSMContext, lang: str) -> None:
-    """\u041e\u0442\u043c\u0435\u043d\u0430 \u0430\u043d\u043a\u0435\u0442\u044b \u043d\u0430 \u043b\u044e\u0431\u043e\u043c \u0448\u0430\u0433\u0435 \u2014 \u043a\u043d\u043e\u043f\u043a\u043e\u0439 \u0438\u043b\u0438 \u043a\u043e\u043c\u0430\u043d\u0434\u043e\u0439 /cancel."""
+    """Отмена анкеты на любом шаге — кнопкой или командой /cancel."""
     await state.clear()
     await state.update_data(lang=lang)
     await message.answer(LOCALIZATION[lang]["anketa_cancelled"], reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
 
 
-@router.message(F.text.in_(["\ud83d\udcdd \u0417\u0430\u043f\u043e\u043b\u043d\u0438\u0442\u044c \u0430\u043d\u043a\u0435\u0442\u0443", "\ud83d\udcdd Anketani to'ldirish"]))
+@router.message(F.text.in_(["📝 Заполнить анкету", "📝 Anketani to'ldirish"]))
 async def start_anketa(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
     if await db.is_user_blocked(session, message.from_user.id):
         await message.answer(LOCALIZATION[lang]["user_blocked_text"], parse_mode="HTML")
@@ -80,9 +80,9 @@ async def start_anketa(message: Message, state: FSMContext, lang: str, session: 
     vacancies = await db.get_active_vacancies(session)
     if not vacancies:
         await message.answer(
-            "\u23f3 \u0412 \u0434\u0430\u043d\u043d\u044b\u0439 \u043c\u043e\u043c\u0435\u043d\u0442 \u043e\u0442\u043a\u0440\u044b\u0442\u044b\u0445 \u0432\u0430\u043a\u0430\u043d\u0441\u0438\u0439 \u043d\u0435\u0442. \n\n\u0421\u043b\u0435\u0434\u0438\u0442\u0435 \u0437\u0430 \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u044f\u043c!"
+            "⏳ В данный момент открытых вакансий нет. \n\nСледите за обновлениям!"
             if lang == "ru" else
-            "\u23f3 Hozirda ochiq vakansiyalar yo'q. \n\nYangilanishlarni kuzatib boring!",
+            "⏳ Hozirda ochiq vakansiyalar yo'q. \n\nYangilanishlarni kuzatib boring!",
             parse_mode="HTML",
         )
         return
@@ -108,7 +108,7 @@ async def start_anketa(message: Message, state: FSMContext, lang: str, session: 
 async def process_name(message: Message, state: FSMContext, lang: str) -> None:
     text = (message.text or "").strip()
     if len(text) < 3 or any(ch.isdigit() for ch in text):
-        await message.answer(LOCALIZATION[lang].get("bad_name", "\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u043a\u043e\u0440\u0440\u0435\u043a\u0442\u043d\u043e\u0435 \u0424\u0418\u041e."), parse_mode="HTML")
+        await message.answer(LOCALIZATION[lang].get("bad_name", "Введите корректное ФИО."), parse_mode="HTML")
         return
     await state.update_data(name=text)
     await message.answer(LOCALIZATION[lang]["ask_birthday"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
@@ -129,7 +129,7 @@ async def process_birthday(message: Message, state: FSMContext, lang: str) -> No
         return
     if not (18 <= age <= 60):
         await message.answer(
-            "\u0412\u043e\u0437\u0440\u0430\u0441\u0442 \u0434\u043e\u043b\u0436\u0435\u043d \u0431\u044b\u0442\u044c \u043e\u0442 18 \u0434\u043e 60 \u043b\u0435\u0442." if lang == "ru" else "Yosh 18 dan 60 yoshgacha bo'lishi kerak.",
+            "Возраст должен быть от 18 до 60 лет." if lang == "ru" else "Yosh 18 dan 60 yoshgacha bo'lishi kerak.",
             parse_mode="HTML",
         )
         return
@@ -153,7 +153,7 @@ async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
     phone = message.contact.phone_number if message.contact else (message.text or "").strip()
     if not message.contact and not re.match(r"^\+?\d{7,15}$", phone):
         await message.answer(
-            "\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u043a\u043e\u0440\u0440\u0435\u043a\u0442\u043d\u044b\u0439 \u043d\u043e\u043c\u0435\u0440: +998901234567 " if lang == "ru" else "To'g'ri raqam kiriting: +998901234567 ",
+            "Введите корректный номер: +998901234567 " if lang == "ru" else "To'g'ri raqam kiriting: +998901234567 ",
             parse_mode="HTML",
         )
         return
@@ -213,9 +213,9 @@ async def process_video(message: Message, state: FSMContext, lang: str) -> None:
     if message.video_note or message.video:
         if duration < MIN_VIDEO_DURATION:
             await message.answer(
-                f"\u0412\u0438\u0434\u0435\u043e \u0441\u043b\u0438\u0448\u043a\u043e\u043c \u043a\u043e\u0440\u043e\u0442\u043a\u043e\u0435 ({duration} \u0441\u0435\u043a). \u041d\u0443\u0436\u043d\u043e \u2265{MIN_VIDEO_DURATION} \u0441\u0435\u043a."
+                f"Видео слишком короткое ({duration} сек). Нужно ≥{MIN_VIDEO_DURATION} сек."
                 if lang == "ru" else
-                f"Video qisqa ({duration}s). \u2265{MIN_VIDEO_DURATION}s kerak.",
+                f"Video qisqa ({duration}s). ≥{MIN_VIDEO_DURATION}s kerak.",
                 parse_mode="HTML",
             )
             return
@@ -280,7 +280,7 @@ async def process_confirmation(
 
 
 async def _do_save_application(session: AsyncSession, user, data: dict) -> int:
-    """\u0421\u043e\u0445\u0440\u0430\u043d\u044f\u0435\u0442 \u0430\u043d\u043a\u0435\u0442\u0443 \u0432 \u0411\u0414. \u0412\u044b\u0437\u044b\u0432\u0430\u0435\u0442\u0441\u044f \u0432\u043d\u0443\u0442\u0440\u0438 submission_lock \u0438\u043b\u0438 \u0434\u043b\u044f \u0430\u0434\u043c\u0438\u043d\u0430."""
+    """Сохраняет анкету в БД. Вызывается внутри submission_lock или для админа."""
     metro_station_id: int | None = None
     metro_name = data.get("metro")
     if metro_name:
@@ -315,7 +315,7 @@ async def _post_confirm_tasks(
     message: Message,
     state: FSMContext,
 ) -> None:
-    """\u0424\u043e\u043d\u043e\u0432\u044b\u0435 \u0437\u0430\u0434\u0430\u0447\u0438 \u043f\u043e\u0441\u043b\u0435 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u044f: HR-\u043e\u0442\u043f\u0440\u0430\u0432\u043a\u0430, \u0433\u0440\u0430\u0444\u0438\u043a, AI-\u0441\u043a\u0440\u0438\u043d\u0438\u043d\u0433, \u0441\u0442\u0430\u0440\u0442 \u0438\u043d\u0442\u0435\u0440\u0432\u044c\u044e."""
+    """Фоновые задачи после подтверждения: HR-отправка, график, AI-скрининг, старт интервью."""
     # ── 1. HR-отправка новой анкеты ──
     try:
         username_raw = user.username or LOCALIZATION["ru"]["none_text"]
@@ -382,8 +382,8 @@ async def _post_confirm_tasks(
             await bot.send_message(
                 chat_id=ADMIN_CHAT_ID,
                 text=(
-                    f"⚠️ AI-интервью не запустилось \u2014 AI недоступен.\n"
-                    f"👤 {hr_name} | user_id: {user.id} | \ud83d� {hr_phone}\n\n"
+                    f"⚠️ AI-интервью не запустилось — AI недоступен.\n"
+                    f"👤 {hr_name} | user_id: {user.id} | 📱 {hr_phone}\n\n"
                     f"Свяжитесь с кандидатом напрямую."
                 ),
                 parse_mode="HTML",
