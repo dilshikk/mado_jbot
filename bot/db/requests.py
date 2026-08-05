@@ -90,7 +90,6 @@ async def update_vacancy(
     name_uz: str | None = None,
     emoji: str | None = None,
 ) -> bool:
-    """Обновляет поля вакансии. Возвращает True если запись найдена."""
     vacancy = await session.get(Vacancy, vacancy_id)
     if not vacancy:
         return False
@@ -107,7 +106,6 @@ async def update_vacancy(
 # ── Станции метро ─────────────────────────────────────────────────────────────
 
 async def get_metro_stations_by_line(session: AsyncSession, line: str) -> list[dict]:
-    """Возвращает активные станции заданной линии, упорядоченные по sort_order."""
     rows = (await session.scalars(
         select(MetroStation)
         .where(MetroStation.line == line, MetroStation.active == 1)
@@ -117,7 +115,6 @@ async def get_metro_stations_by_line(session: AsyncSession, line: str) -> list[d
 
 
 async def get_all_metro_stations_by_line(session: AsyncSession, line: str) -> list[dict]:
-    """Возвращает ВСЕ станции (включая неактивные) заданной линии."""
     rows = (await session.scalars(
         select(MetroStation)
         .where(MetroStation.line == line)
@@ -127,7 +124,6 @@ async def get_all_metro_stations_by_line(session: AsyncSession, line: str) -> li
 
 
 async def get_metro_station_by_id(session: AsyncSession, station_id: int) -> dict | None:
-    """Возвращает станцию по ID или None."""
     station = await session.get(MetroStation, station_id)
     return _to_dict(station) if station else None
 
@@ -137,7 +133,6 @@ async def get_metro_station_name(
     station_id: int | None,
     lang: str = "ru",
 ) -> str:
-    """Возвращает локализованное название станции или «—» если не задано."""
     if station_id is None:
         return "—"
     station = await session.get(MetroStation, station_id)
@@ -150,7 +145,6 @@ async def count_metro_stations(
     session: AsyncSession,
     active_only: bool = False,
 ) -> int:
-    """Возвращает количество станций (всех или только активных)."""
     q = select(func.count(MetroStation.id))
     if active_only:
         q = q.where(MetroStation.active == 1)
@@ -163,7 +157,6 @@ async def add_metro_station(
     name_uz: str,
     line: str,
 ) -> int:
-    """Добавляет новую станцию, возвращает её id."""
     max_order = await session.scalar(
         select(func.coalesce(func.max(MetroStation.sort_order), 0))
         .where(MetroStation.line == line)
@@ -181,7 +174,6 @@ async def add_metro_station(
 
 
 async def toggle_metro_station(session: AsyncSession, station_id: int) -> bool:
-    """Переключает active 0↔1, возвращает новое значение."""
     station = await session.get(MetroStation, station_id)
     if not station:
         return False
@@ -191,7 +183,6 @@ async def toggle_metro_station(session: AsyncSession, station_id: int) -> bool:
 
 
 async def delete_metro_station(session: AsyncSession, station_id: int) -> None:
-    """Удаляет станцию по ID."""
     station = await session.get(MetroStation, station_id)
     if station:
         await session.delete(station)
@@ -507,9 +498,13 @@ async def get_dashboard_stats(session: AsyncSession) -> dict:
     async def count_where(*conditions) -> int:
         return (await session.scalar(select(func.count(Application.id)).where(*conditions))) or 0
 
+    # Считаем все отслеживаемые статусы, включая промежуточные AI-статусы
     statuses = {
         s: await count_where(Application.status == s)
-        for s in ("pending", "accepted", "rejected", "hold", "hired")
+        for s in (
+            "pending", "interview_in_progress", "screened",
+            "accepted", "rejected", "hold", "hired",
+        )
     }
     top_pos = (await session.execute(
         select(Application.position, func.count().label("count"))
@@ -602,7 +597,6 @@ async def get_latest_application(session: AsyncSession, user_id: int) -> dict | 
 # ── AI-интервью ────────────────────────────────────────────────────────────────
 
 async def create_interview_session(session: AsyncSession, user_id: int) -> int:
-    """Создаёт новую сессию интервью, возвращает её id."""
     obj = InterviewSession(
         user_id=user_id,
         qa_log="[]",
@@ -637,7 +631,6 @@ async def update_interview_session(
 
 
 async def append_qa(session: AsyncSession, session_id: int, qa_log: list[dict]) -> None:
-    """Перезаписывает qa_log в сессии интервью."""
     obj = await session.get(InterviewSession, session_id)
     if obj:
         obj.qa_log  = json.dumps(qa_log, ensure_ascii=False)
@@ -660,12 +653,12 @@ async def save_interview_reports(
     personality: str | None = None,
     **_extra,
 ) -> None:
-    """Сохраняет результаты AI-пайплайна в сессию интервью.
+    """\u0421\u043e\u0445\u0440\u0430\u043d\u044f\u0435\u0442 \u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u044b AI-\u043f\u0430\u0439\u043f\u043b\u0430\u0439\u043d\u0430 \u0432 \u0441\u0435\u0441\u0441\u0438\u044e \u0438\u043d\u0442\u0435\u0440\u0432\u044c\u044e.
 
-    Идемпотентна: если report_decision уже записан, повторный вызов
-    игнорируется и логируется предупреждение. Это защищает от двойного
-    запуска пайплайна при случайном нажатии кнопки "Завершить" дважды
-    и сохраняет аудит-трейл (первый результат не перезаписывается).
+    \u0418\u0434\u0435\u043c\u043f\u043e\u0442\u0435\u043d\u0442\u043d\u0430: \u0435\u0441\u043b\u0438 report_decision \u0443\u0436\u0435 \u0437\u0430\u043f\u0438\u0441\u0430\u043d, \u043f\u043e\u0432\u0442\u043e\u0440\u043d\u044b\u0439 \u0432\u044b\u0437\u043e\u0432
+    \u0438\u0433\u043d\u043e\u0440\u0438\u0440\u0443\u0435\u0442\u0441\u044f \u0438 \u043b\u043e\u0433\u0438\u0440\u0443\u0435\u0442\u0441\u044f \u043f\u0440\u0435\u0434\u0443\u043f\u0440\u0435\u0436\u0434\u0435\u043d\u0438\u0435. \u042d\u0442\u043e \u0437\u0430\u0449\u0438\u0449\u0430\u0435\u0442 \u043e\u0442 \u0434\u0432\u043e\u0439\u043d\u043e\u0433\u043e
+    \u0437\u0430\u043f\u0443\u0441\u043a\u0430 \u043f\u0430\u0439\u043f\u043b\u0430\u0439\u043d\u0430 \u043f\u0440\u0438 \u0441\u043b\u0443\u0447\u0430\u0439\u043d\u043e\u043c \u043d\u0430\u0436\u0430\u0442\u0438\u0438 \u043a\u043d\u043e\u043f\u043a\u0438 \"\u0417\u0430\u0432\u0435\u0440\u0448\u0438\u0442\u044c\" \u0434\u0432\u0430\u0436\u0434\u044b
+    \u0438 \u0441\u043e\u0445\u0440\u0430\u043d\u044f\u0435\u0442 \u0430\u0443\u0434\u0438\u0442-\u0442\u0440\u0435\u0439\u043b (\u043f\u0435\u0440\u0432\u044b\u0439 \u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442 \u043d\u0435 \u043f\u0435\u0440\u0435\u0437\u0430\u043f\u0438\u0441\u044b\u0432\u0430\u0435\u0442\u0441\u044f).
     """
 
     def _to_json(val: "dict | str | None") -> str | None:

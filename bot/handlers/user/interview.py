@@ -24,7 +24,6 @@ router.message.filter(IsPrivateChat())
 logger = logging.getLogger(__name__)
 MIN_QUESTIONS = 5
 
-# Тексты кнопок — используются для фильтрации входящих сообщений
 _SKIP_RU    = "⏭ Пропустить вопрос"
 _FINISH_RU  = "🚫 Завершить интервью"
 _SKIP_UZ    = "⏭ Savolni o'tkazish"
@@ -37,7 +36,6 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def _clean_username(raw: str | None) -> str:
-    """Возвращает @username или 'отсутствует' если username не задан."""
     if not raw:
         return "отсутствует"
     clean = raw.lstrip("@").strip()
@@ -53,7 +51,7 @@ async def _send_hr_report(
     user_id: int,
     form_data: dict | None = None,
 ) -> None:
-    """Отправляет итоговый отчёт в HR-чат."""
+    """\u041e\u0442\u043f\u0440\u0430\u0432\u043b\u044f\u0435\u0442 \u0438\u0442\u043e\u0433\u043e\u0432\u044b\u0439 \u043e\u0442\u0447\u0451\u0442 \u0432 HR-\u0447\u0430\u0442."""
     interview = await db.get_interview_session(session, session_id)
     if not interview:
         return
@@ -109,8 +107,9 @@ async def start_interview(
     form_data: dict,
     lang: str,
 ) -> None:
-    """Запускает интервью — вызывается из form.py после сохранения анкеты."""
-    session_id = await db.create_interview_session(session, message.from_user.id)
+    """\u0417\u0430\u043f\u0443\u0441\u043a\u0430\u0435\u0442 \u0438\u043d\u0442\u0435\u0440\u0432\u044c\u044e \u2014 \u0432\u044b\u0437\u044b\u0432\u0430\u0435\u0442\u0441\u044f \u0438\u0437 form.py \u043f\u043e\u0441\u043b\u0435 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u044f \u0430\u043d\u043a\u0435\u0442\u044b."""
+    user_id    = message.from_user.id
+    session_id = await db.create_interview_session(session, user_id)
     step       = await get_next_step(form_data=form_data, qa_log=[], lang=lang)
 
     if step.get("done"):
@@ -119,6 +118,9 @@ async def start_interview(
 
     question = step["question"]
     await db.update_interview_session(session, session_id, q_count=1)
+
+    # Помечаем анкету как находящуюся в процессе AI-интервью
+    await db.update_application_status(session, user_id, "interview_in_progress")
 
     await state.set_state(Interview.answering)
     await state.update_data(
@@ -135,9 +137,6 @@ async def start_interview(
         if lang == "ru" else
         "🤖 <b>Recruiter AI</b>\n\nJuda yaxshi! Endi men sizga bir necha savol beraman."
     )
-
-    # Убираем старую reply-клавиатуру (от шага подтверждения анкеты),
-    # затем сразу показываем клавиатуру интервью с вопросом
     await message.answer(intro, reply_markup=ReplyKeyboardRemove(), parse_mode="HTML")
     await message.answer(
         f"❓ {question}",
@@ -256,7 +255,7 @@ async def _finish_interview(
     lang: str,
     qa_log: list[dict] | None = None,
 ) -> None:
-    """Завершает интервью: запускает пайплайн, сохраняет, отправляет HR."""
+    """\u0417\u0430\u0432\u0435\u0440\u0448\u0430\u0435\u0442 \u0438\u043d\u0442\u0435\u0440\u0432\u044c\u044e: \u0437\u0430\u043f\u0443\u0441\u043a\u0430\u0435\u0442 \u043f\u0430\u0439\u043f\u043b\u0430\u0439\u043d, \u0441\u043e\u0445\u0440\u0430\u043d\u044f\u0435\u0442, \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u044f\u0435\u0442 HR."""
     if qa_log is None:
         qa_log = []
 
@@ -267,14 +266,11 @@ async def _finish_interview(
         if lang == "ru" else
         "✅ <b>Intervyu yakunlandi!</b>\n\nJavoblaringiz uchun rahmat. HR-menejer tez orada siz bilan bog'lanadi."
     )
-    # Возвращаем главное меню после завершения интервью
     await message.answer(thanks, reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
 
     user_id = message.from_user.id if message.from_user else message.chat.id
 
     # ── ИДЕМПОТЕНТНОСТЬ: не запускать пайплайн повторно ──────────────────────
-    # Если отчёт уже записан (двойное нажатие / повторный вызов), просто
-    # повторно отправляем готовый отчёт в HR-чат и выходим.
     existing = await db.get_interview_session(session, session_id)
     if existing and existing.get("report_decision"):
         logger.info(
@@ -321,6 +317,9 @@ async def _finish_interview(
         total_score=reports.get("total_score"),
         summary=reports.get("summary"),
     )
+
+    # AI оценил кандидата — отчёт готов, ждёт решения HR
+    await db.update_application_status(session, user_id, "screened")
 
     await _send_hr_report(message.bot, session, session_id, user_id, form_data=form_data)
 
