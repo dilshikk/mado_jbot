@@ -47,6 +47,20 @@ def get_cancel_keyboard(lang: str) -> ReplyKeyboardMarkup:
     )
 
 
+def get_skip_cancel_keyboard(lang: str) -> ReplyKeyboardMarkup:
+    """Клавиатура с кнопками «⏭ Пропустить» и «❌ Отменить».
+
+    Используется для шагов, где ответ не обязателен.
+    """
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            _row(_btn(lang, "btn_skip", "⏭ Пропустить")),
+            _row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")),
+        ],
+        resize_keyboard=True,
+    )
+
+
 def get_phone_keyboard(lang: str) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
