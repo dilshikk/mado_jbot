@@ -23,7 +23,14 @@ import re
 from typing import Any
 
 from bot.ai.client import cf_chat
-from bot.ai.models import LLAMA_70B, LLAMA_8B
+from bot.ai.models import (
+    LLAMA_70B,
+    COMMUNICATION_MODEL,
+    HIRING_DECISION_MODEL,
+    INTEGRITY_MODEL,
+    JOB_MATCH_MODEL,
+    RESUME_MODEL,
+)
 from bot.ai.prompts import (
     COMMUNICATION_SYSTEM,
     HIRING_DECISION_SYSTEM,
@@ -187,12 +194,14 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
     context = _base_context(form_data, qa_log)
 
     # ── Уровень 2: Resume Extractor ───────────────────────────────────────
-    resume_data = await _run_json_agent(RESUME_SYSTEM, context, max_tokens=400)
+    resume_data = await _run_json_agent(
+        RESUME_SYSTEM, context, max_tokens=400, model=RESUME_MODEL,
+    )
 
     # ── Уровень 3: Communication + Integrity параллельно ─────────────────
     comm_result, integrity_result = await asyncio.gather(
-        _run_json_agent(COMMUNICATION_SYSTEM, context, max_tokens=400),
-        _run_json_agent(INTEGRITY_SYSTEM, context, max_tokens=500),
+        _run_json_agent(COMMUNICATION_SYSTEM, context, max_tokens=400, model=COMMUNICATION_MODEL),
+        _run_json_agent(INTEGRITY_SYSTEM, context, max_tokens=500, model=INTEGRITY_MODEL),
         return_exceptions=True,
     )
 
@@ -215,7 +224,9 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
         + "\n\n=== INTEGRITY AI ===\n"
         + json.dumps(integrity_data, ensure_ascii=False)
     )
-    job_match_data = await _run_json_agent(JOB_MATCH_SYSTEM, level3_context, max_tokens=400)
+    job_match_data = await _run_json_agent(
+        JOB_MATCH_SYSTEM, level3_context, max_tokens=400, model=JOB_MATCH_MODEL,
+    )
 
     # ── Уровень 5: Hiring Decision — получает ВСЁ ─────────────────────────
     level4_context = (
@@ -224,7 +235,7 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
         + json.dumps(job_match_data, ensure_ascii=False)
     )
     decision_data = await _run_json_agent(
-        HIRING_DECISION_SYSTEM, level4_context, max_tokens=600, model=LLAMA_70B,
+        HIRING_DECISION_SYSTEM, level4_context, max_tokens=600, model=HIRING_DECISION_MODEL,
     )
 
     # Итоговый балл считается в Python по весам
