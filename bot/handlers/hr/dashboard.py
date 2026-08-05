@@ -26,6 +26,13 @@ from bot.utils.formatters import build_hr_resume_text
 router = Router()
 logger = logging.getLogger(__name__)
 
+# Разделительные символы вынесены из f-строк: выражения в f-строках
+# не могут содержать обратный слеш до Python 3.12
+_SEP = "─"      # ─
+_STAR = "⭐"    # ⭐
+_FULL = "▓"     # ▓
+_EMPTY_BAR = "░"  # ░
+
 _STATUS_ICON: dict[str, str] = {
     "pending":              "⏳",
     "interview_in_progress": "🤖",
@@ -95,8 +102,12 @@ async def _send_dashboard(message: Message, session: AsyncSession) -> None:
     in_progress = stats.get("interview_in_progress", 0)
     screened    = stats.get("screened", 0)
 
+    sep = _SEP * 30
+    updated = datetime.now().strftime("%d.%m.%Y %H:%M")
+    scored_count = scores.get("scored_count", 0)
+
     text = (
-        f"📊 HR Dashboard — MADO \n Обновлено: {datetime.now().strftime('%d.%m.%Y %H:%M')} \n{'\u2500'*30}\n\n"
+        f"📊 HR Dashboard — MADO \n Обновлено: {updated} \n{sep}\n\n"
         f"👥 Пользователи \n Всего: {stats['total_users']} \n Новых сегодня: {stats['new_today']} \n Новых за неделю: {stats['new_week']} \n\n"
         f"📝 Анкеты \n"
         f" Всего: {stats['total_apps']} \n"
@@ -107,7 +118,7 @@ async def _send_dashboard(message: Message, session: AsyncSession) -> None:
         f" ❌ Отклонено: {stats['rejected']} \n"
         f" ⏸ На паузе: {stats['hold']} \n\n"
         f"📅 Собеседования \n Запланировано: {stats['interviews_planned']} \n Сегодня: {stats['interviews_today']} \n\n"
-        f"⭐️ Средняя оценка \n {score_bar} {avg_score_str} (оценено: {scores.get('scored_count', 0)})\n\n"
+        f"⭐️ Средняя оценка \n {score_bar} {avg_score_str} (оценено: {scored_count})\n\n"
         f"🏆 Топ вакансий \n{top_positions}\n\n"
         f"📈 Анкеты за 7 дней \n {trend_text} "
     )
@@ -131,7 +142,7 @@ async def resend_candidate_card(message: Message, session: AsyncSession) -> None
     bot: Bot = message.bot
     app = await db.get_latest_application(session, candidate_id)
     if not app:
-        await message.answer(f"❌ Анкета для user_id={candidate_id} не найдена.")
+        await message.answer(f"❌ Анкета для user_id={candidate_id} не найдено.")
         return
     try:
         tg_user = await bot.get_chat(candidate_id)
@@ -170,7 +181,8 @@ async def dashboard_list(callback: CallbackQuery, session: AsyncSession) -> None
     if not apps:
         await callback.answer("Нет данных по этому фильтру.", show_alert=True)
         return
-    lines = [f" {title} ({len(apps)})\n{'\u2500'*28}"]
+    sep = _SEP * 28
+    lines = [f" {title} ({len(apps)})\n{sep}"]
     for i, a in enumerate(apps[:20], 1):
         score_str  = f" ⭐{a['hr_score']}" if a.get("hr_score") else ""
         date_str   = a["created_at"][:10] if a.get("created_at") else "—"
@@ -192,10 +204,10 @@ async def dashboard_positions(callback: CallbackQuery, session: AsyncSession) ->
         await callback.answer("Нет данных.", show_alert=True)
         return
     max_count = max(p["total"] for p in data) or 1
-    lines = [" 🏆 Статистика по вакансиям \n" + "─"*28]
+    lines = [" 🏆 Статистика по вакансиям \n" + _SEP * 28]
     for p in data:
         bar_len = round(p["total"] / max_count * 10)
-        bar = "▓" * bar_len + "░" * (10 - bar_len)
+        bar = _FULL * bar_len + _EMPTY_BAR * (10 - bar_len)
         accepted = p.get("accepted", 0)
         pct = round(accepted / p["total"] * 100) if p["total"] else 0
         lines.append(f"\n {p['position']} \n {bar} {p['total']} заявок\n ✅ Одобрено: {accepted} ({pct}%)")
@@ -216,15 +228,19 @@ async def dashboard_scores(callback: CallbackQuery, session: AsyncSession) -> No
     for star in range(5, 0, -1):
         count = data["distribution"].get(star, 0)
         bar_len = round(count / data["scored_count"] * 10) if data["scored_count"] else 0
-        dist_lines.append(f" {'\u2b50'*star}: {'\u2593'*bar_len}{'\u2591'*(10-bar_len)} {count}")
+        stars = _STAR * star
+        bar = _FULL * bar_len + _EMPTY_BAR * (10 - bar_len)
+        dist_lines.append(f" {stars}: {bar} {count}")
     top_comments = "\n".join(
         f" • {c['name']} ({c['hr_score']}⭐): {c['hr_comment']}"
         for c in data["top_comments"][:3]
     ) or " нет комментариев"
+    sep = _SEP * 28
+    dist_text = chr(10).join(dist_lines)
     text = (
-        f"⭐️ Детальная статистика оценок \n{'\u2500'*28}\n\n"
+        f"⭐️ Детальная статистика оценок \n{sep}\n\n"
         f"Оценено: {data['scored_count']} \nСредняя: {data['avg_score']}/5 \n\n"
-        f" Распределение: \n{chr(10).join(dist_lines)}\n\n"
+        f" Распределение: \n{dist_text}\n\n"
         f" Последние комментарии: \n{top_comments}"
     )
     with suppress(TelegramAPIError):
@@ -251,7 +267,8 @@ async def dashboard_search_result(message: Message, state: FSMContext, session: 
     if not apps:
         await message.answer(f"🔍 По запросу «{query}» ничего не найдено.")
         return
-    lines = [f"🔍 Результат: «{query}» ({len(apps)})\n{'\u2500'*28}"]
+    sep = _SEP * 28
+    lines = [f"🔍 Результат: «{query}» ({len(apps)})\n{sep}"]
     for a in apps[:15]:
         icon = _STATUS_ICON.get(a["status"], "❓")
         lines.append(f"\n{icon} {a['name']} \n 💼 {a['position']} 📱 {a['phone']}\n 🆔 {a['user_id']} 📅 {a['created_at'][:10]}")
