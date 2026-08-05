@@ -223,7 +223,7 @@ async def process_gender(message: Message, state: FSMContext, lang: str) -> None
 # ── Телефон ───────────────────────────────────────────────────────────────────
 
 @router.message(Form.waiting_phone)
-async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
+async def process_phone(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
     phone = message.contact.phone_number if message.contact else (message.text or "").strip()
     if not message.contact and not re.match(r"^\+?\d{7,15}$", phone):
         logger.debug("process_phone: invalid phone user_id=%d input=%r", message.from_user.id, phone)
@@ -238,47 +238,10 @@ async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
         return
     await state.update_data(phone=phone)
     logger.info("process_phone: user_id=%d phone=%r", message.from_user.id, phone)
-    with suppress(TelegramAPIError):
-        await message.answer(
-            LOCALIZATION[lang]["ask_metro"],
-            reply_markup=kb.get_metro_keyboard(lang),
-            parse_mode="HTML",
-        )
-    await state.set_state(Form.waiting_metro)
 
-
-# ── Метро ─────────────────────────────────────────────────────────────────────
-
-@router.message(Form.waiting_metro)
-async def process_metro(message: Message, state: FSMContext, lang: str) -> None:
-    text = (message.text or "").strip()
-    skip_value = LOCALIZATION[lang].get("metro_skip", LOCALIZATION[lang]["btn_skip"])
-    valid_values = {
-        button.text
-        for row in kb.get_metro_keyboard(lang).keyboard
-        for button in row
-        if button.text != LOCALIZATION[lang]["btn_cancel"]
-    }
-    if text not in valid_values:
-        logger.debug("process_metro: invalid input user_id=%d input=%r", message.from_user.id, text)
-        with suppress(TelegramAPIError):
-            await message.answer(LOCALIZATION[lang]["bad_metro"], parse_mode="HTML")
-        with suppress(TelegramAPIError):
-            await message.answer(
-                LOCALIZATION[lang]["ask_metro"],
-                reply_markup=kb.get_metro_keyboard(lang),
-                parse_mode="HTML",
-            )
-        return
-    await state.update_data(metro=None if text == skip_value else text)
-    logger.info("process_metro: user_id=%d metro=%r", message.from_user.id, text)
-    with suppress(TelegramAPIError):
-        await message.answer(
-            LOCALIZATION[lang]["ask_languages"],
-            reply_markup=kb.get_languages_keyboard(lang),
-            parse_mode="HTML",
-        )
-    await state.set_state(Form.waiting_languages)
+    # ── Переходим к inline-выбору метро ──────────────────────────────────────
+    from bot.handlers.user.metro import ask_metro  # noqa: PLC0415
+    await ask_metro(message, state, lang)
 
 
 # ── Желаемая должность ────────────────────────────────────────────────────────
@@ -336,7 +299,6 @@ async def process_video(message: Message, state: FSMContext, lang: str) -> None:
         with suppress(TelegramAPIError):
             await message.answer(
                 LOCALIZATION[lang]["ask_video"],
-                # Видео необязательно — показываем кнопку «Пропустить»
                 reply_markup=kb.get_skip_cancel_keyboard(lang),
                 parse_mode="HTML",
             )
@@ -421,17 +383,19 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
         phone=data.get("phone"),
         position=data.get("position"),
         experience=data.get("experience", "—"),
+        metro_station_id=data.get("metro_station_id"),
     )
     logger.info(
-        "process_confirmation: application saved user_id=%d position=%r",
-        user.id, data.get("position"),
+        "process_confirmation: application saved user_id=%d position=%r metro_station_id=%s",
+        user.id, data.get("position"), data.get("metro_station_id"),
     )
 
     # ── 2. Записываем в Google Sheets ────────────────────────────────────────
+    metro_name = data.get("metro_name") or "—"
     row_data = [
         now_str, data.get("branch"), data.get("position"), data.get("name"),
         data.get("birthday"), data.get("gender"), data.get("phone"),
-        data.get("metro"),
+        metro_name,
         ", ".join(data.get("languages") or []) or None,
         data.get("readiness"), data.get("experience", "—"),
         data.get("exp_company"), data.get("exp_position"),
@@ -469,14 +433,15 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
         )
 
     # ── 4. В HR-группу НИЧЕГО не отправляем — только после завершения интервью ──
-    # Весь пакет (анкета + интервью + AI-анализ) отправляется из interview._finish_interview()
 
     # ── 5. Запускаем AI-интервью ──────────────────────────────────────────────
     from bot.handlers.user.interview import start_interview  # noqa: PLC0415
 
     form_data_for_interview = dict(data)
-    # Сохраняем username для итогового пакета
     form_data_for_interview["username"] = username_raw
+    # Передаём metro_name для отображения в HR-пакете
+    if not form_data_for_interview.get("metro_name"):
+        form_data_for_interview["metro_name"] = "—"
 
     await state.clear()
     await state.update_data(lang=lang)
@@ -491,5 +456,4 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
         )
     except Exception as e:
         logger.error("Ошибка запуска интервью для user_id=%d: %s", user.id, e, exc_info=True)
-        # Если интервью не запустилось — устанавливаем статус для повтора
         await db.update_application_status(session, user.id, "interview_failed")
