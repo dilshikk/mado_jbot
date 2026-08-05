@@ -13,6 +13,7 @@ from bot.ai.prompts import INTERVIEW_SYSTEM
 logger = logging.getLogger(__name__)
 
 MAX_QUESTIONS = 10
+MIN_QUESTIONS = 5
 
 
 def _extract_text(result: dict) -> str:
@@ -65,7 +66,8 @@ def _build_messages(form_data: dict, qa_log: list[dict], lang: str) -> list[dict
         f"Вакансия: {form_data.get('position', '—')}\n"
         f"Опыт: {form_data.get('experience', '—')}\n"
         f"Гражданство: {form_data.get('citizenship', '—')}\n"
-        f"Вопросов задано: {len(qa_log)} из {MAX_QUESTIONS}\n"
+        f"Вопросов задано: {len(qa_log)}. Минимум: {MIN_QUESTIONS}, максимум: {MAX_QUESTIONS}\n"
+        "Не задавай повторных вопросов. Фокус только на: мотивация работать в MADO, опыт работы, работа с гостями, командная работа, стрессовые ситуации, карьерные цели.\n"
     )
     messages: list[dict] = [
         {"role": "system", "content": f"{INTERVIEW_SYSTEM}\n\n{context}"},

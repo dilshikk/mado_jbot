@@ -9,9 +9,11 @@ class Form(StatesGroup):
     waiting_name         = State()
     waiting_birthday     = State()
     waiting_gender       = State()
-    waiting_family       = State()
-    waiting_citizenship  = State()
     waiting_address      = State()
+    waiting_metro        = State()
+    waiting_citizenship  = State()
+    waiting_languages    = State()
+    waiting_phone        = State()
 
     # Опыт работы — сначала "Есть ли опыт?"
     waiting_experience   = State()
@@ -30,11 +32,7 @@ class Form(StatesGroup):
     waiting_smoking        = State()
     waiting_med_book       = State()
 
-    # Языки владения (мультиселект)
-    waiting_languages    = State()
-
     # Контакты и медиа
-    waiting_phone        = State()
     waiting_photo        = State()
     waiting_video        = State()
     waiting_confirmation = State()
