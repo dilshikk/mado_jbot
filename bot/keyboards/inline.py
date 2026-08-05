@@ -16,6 +16,14 @@ METRO_LINES: dict[str, tuple[str, str, str]] = {
 }
 
 
+def _skip_text(lang: str) -> str:
+    return "O'tkazib yuborish" if lang == "uz" else "Пропустить"
+
+
+def _cancel_text(lang: str) -> str:
+    return "Bekor qilish" if lang == "uz" else "Отменить заполнение"
+
+
 def get_metro_lines_keyboard(lang: str) -> InlineKeyboardMarkup:
     """Первый шаг — выбор линии метро."""
     rows = []
@@ -25,10 +33,8 @@ def get_metro_lines_keyboard(lang: str) -> InlineKeyboardMarkup:
             text=f"{emoji} {name}",
             callback_data=f"metro_line:{line_id}",
         )])
-    skip_text   = "⏭ O'tkazish" if lang == "uz" else "⏭ Пропустить"
-    cancel_text = "❌ Bekor qilish" if lang == "uz" else "❌ Отменить заполнение"
-    rows.append([InlineKeyboardButton(text=skip_text,   callback_data="metro_line:skip")])
-    rows.append([InlineKeyboardButton(text=cancel_text, callback_data="metro_cancel")])
+    rows.append([InlineKeyboardButton(text=_skip_text(lang),   callback_data="metro_line:skip")])
+    rows.append([InlineKeyboardButton(text=_cancel_text(lang), callback_data="metro_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -56,17 +62,10 @@ def get_metro_stations_keyboard(
     if pair:
         rows.append(pair)
 
-    # Кнопка «Назад» с названием линии
-    line_info = METRO_LINES.get(line)
-    if line_info:
-        back_label = line_info[2] if lang == "uz" else line_info[1]
-        back_text  = f"⬅ {back_label}"
-    else:
-        back_text = "⬅ Назад" if lang != "uz" else "⬅ Ortga"
+    # Кнопка «Назад» к списку линий
+    back_text = "Ortga" if lang == "uz" else "Назад"
     rows.append([InlineKeyboardButton(text=back_text, callback_data="metro_back")])
-
-    cancel_text = "❌ Bekor qilish" if lang == "uz" else "❌ Отменить заполнение"
-    rows.append([InlineKeyboardButton(text=cancel_text, callback_data="metro_cancel")])
+    rows.append([InlineKeyboardButton(text=_cancel_text(lang), callback_data="metro_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
