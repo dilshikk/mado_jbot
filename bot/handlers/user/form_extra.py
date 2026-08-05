@@ -18,10 +18,8 @@
 """
 from __future__ import annotations
 
-import logging
-
-from aiogram import F, Router
-from aiogram.types import CallbackQuery, Message
+from aiogram import Router
+from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,7 +27,6 @@ from bot import keyboards as kb
 from bot.lexicon import LOCALIZATION
 from bot.states import Form
 
-logger = logging.getLogger(__name__)
 router = Router()
 
 
@@ -48,33 +45,28 @@ def _skip_text(lang: str) -> str:
 
 
 # ─── 1. Опыт работы — ветвление Да / Нет ─────────────────────────────────────
-# Этот хендлер перехватывает callback ВМЕСТО старого router.message(waiting_experience).
-# Старый process_experience в form.py теперь отвечает только за валидацию кнопки,
-# а финальный переход делает handle_experience_yn.
-
-@router.callback_query(Form.waiting_experience, F.data.startswith("experience:"))
-async def handle_experience_yn(callback: CallbackQuery, state: FSMContext) -> None:
+@router.message(Form.waiting_experience)
+async def handle_experience_yn(message: Message, state: FSMContext) -> None:
     data   = await state.get_data()
     lang   = _lang(data)
-    answer = callback.data.split(":")[1]  # "yes" или "no"
+    text = (message.text or "").strip()
 
-    await callback.message.edit_reply_markup(reply_markup=None)
-
-    if answer == "no":
+    if text == _t(lang, "exp_no"):
         await state.update_data(
             experience=_t(lang, "exp_no", "Нет"),
             exp_company=None, exp_position=None,
             exp_duration=None, exp_duties=None,
         )
-        await _ask_readiness(callback.message, state, lang)
-    else:
+        await _ask_readiness(message, state, lang)
+    elif text == _t(lang, "exp_yes"):
         await state.update_data(experience=_t(lang, "exp_yes", "Да"))
         await state.set_state(Form.waiting_exp_company)
-        await callback.message.answer(
+        await message.answer(
             _t(lang, "ask_exp_company"),
             reply_markup=kb.get_cancel_keyboard(lang),
         )
-    await callback.answer()
+    else:
+        await message.answer(_t(lang, "ask_experience_yn"), reply_markup=kb.get_experience_yn_keyboard(lang))
 
 
 # ─── 2. Под-шаги опыта ────────────────────────────────────────────────────────
@@ -136,20 +128,25 @@ async def _ask_readiness(message: Message, state: FSMContext, lang: str) -> None
     )
 
 
-@router.callback_query(Form.waiting_readiness, F.data.startswith("readiness:"))
-async def handle_readiness(callback: CallbackQuery, state: FSMContext) -> None:
+@router.message(Form.waiting_readiness)
+async def handle_readiness(message: Message, state: FSMContext) -> None:
     data   = await state.get_data()
     lang   = _lang(data)
-    answer = callback.data.split(":")[1]
-    await state.update_data(readiness=None if answer == "skip" else answer)
-    await callback.message.edit_reply_markup(reply_markup=None)
+    text = (message.text or "").strip()
+    valid = {value for value in (
+        _t(lang, "readiness_today"), _t(lang, "readiness_tomorrow"), _t(lang, "readiness_week"),
+        _t(lang, "readiness_two_weeks"), _t(lang, "readiness_month"), _skip_text(lang),
+    )}
+    if text not in valid:
+        await _ask_readiness(message, state, lang)
+        return
+    await state.update_data(readiness=None if text == _skip_text(lang) else text)
     await state.set_state(Form.waiting_salary)
-    await callback.message.answer(
+    await message.answer(
         _t(lang, "ask_salary"),
         reply_markup=kb.get_cancel_keyboard(lang),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 # ─── 4. Зарплатные ожидания ───────────────────────────────────────────────────
@@ -169,128 +166,122 @@ async def handle_salary(message: Message, state: FSMContext) -> None:
 
 # ─── 5. График работы ─────────────────────────────────────────────────────────
 
-@router.callback_query(Form.waiting_schedule, F.data.startswith("schedule:"))
-async def handle_schedule(callback: CallbackQuery, state: FSMContext) -> None:
+@router.message(Form.waiting_schedule)
+async def handle_schedule(message: Message, state: FSMContext) -> None:
     data   = await state.get_data()
     lang   = _lang(data)
-    answer = callback.data.split(":")[1]
-    await state.update_data(schedule=None if answer == "skip" else answer)
-    await callback.message.edit_reply_markup(reply_markup=None)
+    text = (message.text or "").strip()
+    valid = {_t(lang, key) for key in ("schedule_6_1", "schedule_5_2", "schedule_3_1", "schedule_2_2", "schedule_full", "schedule_flex", "schedule_any")}
+    valid.add(_skip_text(lang))
+    if text not in valid:
+        await message.answer(_t(lang, "ask_schedule"), reply_markup=kb.get_schedule_keyboard(lang))
+        return
+    await state.update_data(schedule=None if text == _skip_text(lang) else text)
     await state.set_state(Form.waiting_evening_shifts)
-    await callback.message.answer(
+    await message.answer(
         _t(lang, "ask_evening_shifts"),
         reply_markup=kb.get_evening_shifts_keyboard(lang),
     )
-    await callback.answer()
 
 
 # ─── 6. Вечерние смены ────────────────────────────────────────────────────────
 
-@router.callback_query(Form.waiting_evening_shifts, F.data.startswith("evening:"))
-async def handle_evening_shifts(callback: CallbackQuery, state: FSMContext) -> None:
+@router.message(Form.waiting_evening_shifts)
+async def handle_evening_shifts(message: Message, state: FSMContext) -> None:
     data   = await state.get_data()
     lang   = _lang(data)
-    answer = callback.data.split(":")[1]
-    await state.update_data(evening_shifts=None if answer == "skip" else answer)
-    await callback.message.edit_reply_markup(reply_markup=None)
+    text = (message.text or "").strip()
+    valid = {_t(lang, "evening_yes"), _t(lang, "evening_no"), _t(lang, "evening_agreement"), _skip_text(lang)}
+    if text not in valid:
+        await message.answer(_t(lang, "ask_evening_shifts"), reply_markup=kb.get_evening_shifts_keyboard(lang))
+        return
+    await state.update_data(evening_shifts=None if text == _skip_text(lang) else text)
     await state.set_state(Form.waiting_weekends)
-    await callback.message.answer(
+    await message.answer(
         _t(lang, "ask_weekends"),
         reply_markup=kb.get_weekends_keyboard(lang),
     )
-    await callback.answer()
 
 
 # ─── 7. Выходные и праздники ──────────────────────────────────────────────────
 
-@router.callback_query(Form.waiting_weekends, F.data.startswith("weekends:"))
-async def handle_weekends(callback: CallbackQuery, state: FSMContext) -> None:
+@router.message(Form.waiting_weekends)
+async def handle_weekends(message: Message, state: FSMContext) -> None:
     data   = await state.get_data()
     lang   = _lang(data)
-    answer = callback.data.split(":")[1]
-    await state.update_data(weekends=None if answer == "skip" else answer)
-    await callback.message.edit_reply_markup(reply_markup=None)
+    text = (message.text or "").strip()
+    valid = {_t(lang, "weekends_yes"), _t(lang, "weekends_no"), _t(lang, "weekends_sometimes"), _skip_text(lang)}
+    if text not in valid:
+        await message.answer(_t(lang, "ask_weekends"), reply_markup=kb.get_weekends_keyboard(lang))
+        return
+    await state.update_data(weekends=None if text == _skip_text(lang) else text)
     await state.set_state(Form.waiting_smoking)
-    await callback.message.answer(
+    await message.answer(
         _t(lang, "ask_smoking"),
         reply_markup=kb.get_smoking_keyboard(lang),
     )
-    await callback.answer()
 
 
 # ─── 8. Курение ───────────────────────────────────────────────────────────────
 
-@router.callback_query(Form.waiting_smoking, F.data.startswith("smoking:"))
-async def handle_smoking(callback: CallbackQuery, state: FSMContext) -> None:
+@router.message(Form.waiting_smoking)
+async def handle_smoking(message: Message, state: FSMContext) -> None:
     data   = await state.get_data()
     lang   = _lang(data)
-    answer = callback.data.split(":")[1]
-    await state.update_data(smoking=None if answer == "skip" else answer)
-    await callback.message.edit_reply_markup(reply_markup=None)
+    text = (message.text or "").strip()
+    valid = {_t(lang, "smoking_no"), _t(lang, "smoking_yes"), _skip_text(lang)}
+    if text not in valid:
+        await message.answer(_t(lang, "ask_smoking"), reply_markup=kb.get_smoking_keyboard(lang))
+        return
+    await state.update_data(smoking=None if text == _skip_text(lang) else text)
     await state.set_state(Form.waiting_med_book)
-    await callback.message.answer(
+    await message.answer(
         _t(lang, "ask_med_book"),
         reply_markup=kb.get_med_book_keyboard(lang),
     )
-    await callback.answer()
 
 
 # ─── 9. Медицинская книжка ────────────────────────────────────────────────────
 
-@router.callback_query(Form.waiting_med_book, F.data.startswith("med_book:"))
-async def handle_med_book(callback: CallbackQuery, state: FSMContext) -> None:
+@router.message(Form.waiting_med_book)
+async def handle_med_book(message: Message, state: FSMContext) -> None:
     data   = await state.get_data()
     lang   = _lang(data)
-    answer = callback.data.split(":")[1]
-    await state.update_data(med_book=None if answer == "skip" else answer)
-    await callback.message.edit_reply_markup(reply_markup=None)
+    text = (message.text or "").strip()
+    valid = {_t(lang, "med_book_yes"), _t(lang, "med_book_no"), _t(lang, "med_book_in_progress"), _skip_text(lang)}
+    if text not in valid:
+        await message.answer(_t(lang, "ask_med_book"), reply_markup=kb.get_med_book_keyboard(lang))
+        return
+    await state.update_data(med_book=None if text == _skip_text(lang) else text)
     await state.set_state(Form.waiting_languages)
-    await state.update_data(languages_selected=[])
-    await callback.message.answer(
+    await message.answer(
         _t(lang, "ask_languages"),
-        reply_markup=kb.get_languages_keyboard(lang, set()),
+        reply_markup=kb.get_languages_keyboard(lang),
     )
-    await callback.answer()
 
 
 # ─── 10. Языки владения (мультиселект) ───────────────────────────────────────
 
-@router.callback_query(Form.waiting_languages, F.data.startswith("lang_toggle:"))
-async def handle_languages_toggle(callback: CallbackQuery, state: FSMContext) -> None:
+@router.message(Form.waiting_languages)
+async def handle_languages(message: Message, state: FSMContext) -> None:
     data   = await state.get_data()
     lang   = _lang(data)
-    action = callback.data.split(":")[1]
-
-    if action == "skip":
+    text = (message.text or "").strip()
+    if text == _skip_text(lang):
         await state.update_data(languages=None)
-        await callback.message.edit_reply_markup(reply_markup=None)
-        await _ask_phone(callback.message, state, lang)
-        await callback.answer()
+        await _ask_phone(message, state, lang)
         return
 
-    if action == "done":
-        selected: list[str] = data.get("languages_selected", [])
-        await state.update_data(languages=selected or None)
-        await callback.message.edit_reply_markup(reply_markup=None)
-        await _ask_phone(callback.message, state, lang)
-        await callback.answer()
+    options = {_t(lang, key) for key in ("lang_opt_ru", "lang_opt_uz", "lang_opt_en", "lang_opt_tr", "lang_opt_other")}
+    if text not in options:
+        await message.answer(_t(lang, "ask_languages"), reply_markup=kb.get_languages_keyboard(lang))
         return
-
-    # Переключить выбор языка
-    selected_set: set[str] = set(data.get("languages_selected", []))
-    if action in selected_set:
-        selected_set.discard(action)
-    else:
-        selected_set.add(action)
-
-    await state.update_data(languages_selected=list(selected_set))
-    try:
-        await callback.message.edit_reply_markup(
-            reply_markup=kb.get_languages_keyboard(lang, selected_set)
-        )
-    except Exception as exc:
-        logger.warning("Не удалось обновить выбор языков: %s", exc)
-    await callback.answer()
+    selected = data.get("languages", [])
+    selected = selected if isinstance(selected, list) else []
+    if text not in selected:
+        selected.append(text)
+    await state.update_data(languages=selected)
+    await _ask_phone(message, state, lang)
 
 
 # ─── 11. Фото кандидата ───────────────────────────────────────────────────────
