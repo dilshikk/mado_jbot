@@ -36,7 +36,7 @@ BLOCKING_STATUSES = {"pending", "accepted", "hired", "hold"}
 _FORM_ACTIVE_STATES = (
     Form.waiting_name, Form.waiting_birthday, Form.waiting_gender,
     Form.waiting_phone, Form.waiting_metro,
-    Form.waiting_citizenship, Form.waiting_languages,
+    Form.waiting_languages,
     Form.waiting_position, Form.waiting_readiness, Form.waiting_experience,
     Form.waiting_exp_company, Form.waiting_exp_position, Form.waiting_exp_duration,
     Form.waiting_exp_duties, Form.waiting_salary,
@@ -172,18 +172,6 @@ async def process_metro(message: Message, state: FSMContext, lang: str) -> None:
         await message.answer(LOCALIZATION[lang]["ask_metro"], reply_markup=kb.get_metro_keyboard(lang), parse_mode="HTML")
         return
     await state.update_data(metro=None if text == skip_value else text)
-    await message.answer(LOCALIZATION[lang]["ask_citizenship"], reply_markup=kb.get_citizenship_keyboard(lang), parse_mode="HTML")
-    await state.set_state(Form.waiting_citizenship)
-
-
-@router.message(Form.waiting_citizenship)
-async def process_citizenship(message: Message, state: FSMContext, lang: str) -> None:
-    text = (message.text or "").strip()
-    skip_value = LOCALIZATION[lang].get("citizenship_skip", LOCALIZATION[lang]["btn_skip"])
-    if not text:
-        await message.answer(LOCALIZATION[lang]["ask_citizenship"], reply_markup=kb.get_citizenship_keyboard(lang), parse_mode="HTML")
-        return
-    await state.update_data(citizenship=None if text == skip_value else text)
     await message.answer(LOCALIZATION[lang]["ask_languages"], reply_markup=kb.get_languages_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_languages)
 
@@ -309,7 +297,7 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
     row_data = [
         now_str, data.get("branch"), data.get("position"), data.get("name"),
         data.get("birthday"), data.get("gender"), data.get("phone"),
-        data.get("metro"), data.get("citizenship"),
+        data.get("metro"),
         ", ".join(data.get("languages") or []) or None,
         data.get("readiness"), data.get("experience", "—"),
         data.get("exp_company"), data.get("exp_position"),
