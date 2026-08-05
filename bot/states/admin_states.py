@@ -31,6 +31,12 @@ class AddVacancy(StatesGroup):
     waiting_emoji   = State()
 
 
+class EditVacancy(StatesGroup):
+    """Состояния редактирования вакансии."""
+    choosing_field = State()   # выбор поля (name_ru / name_uz / emoji)
+    waiting_value  = State()   # ввод нового значения
+
+
 class DashboardFilter(StatesGroup):
     """Состояния фильтров HR-дашборда."""
     waiting_position_filter = State()
