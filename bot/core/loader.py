@@ -23,6 +23,7 @@ from bot.handlers.user import common as user
 from bot.handlers.user import form
 from bot.handlers.user import form_extra
 from bot.handlers.user import interview as user_interview
+from bot.handlers.user import metro as user_metro
 from bot.handlers.user import subscription
 
 # Роутер для групповых и супергрупповых чатов
@@ -73,6 +74,8 @@ def create_dispatcher(storage: SQLStorage | None = None) -> Dispatcher:
     dp.include_router(form.router)
     # Новые шаги анкеты — после form, но до interview
     dp.include_router(form_extra.router)
+    # Inline-выбор метро — callback_query хендлеры для состояния Form.waiting_metro
+    dp.include_router(user_metro.router)
     # AI-интервью — должен быть после form, чтобы его FSM не перехватывал анкету
     dp.include_router(user_interview.router)
 
