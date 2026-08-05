@@ -24,5 +24,10 @@ class InterviewSession(Base):
     report_personality: Mapped[str | None] = mapped_column(Text)
     report_job_match:   Mapped[str | None] = mapped_column(Text)
     report_summary:     Mapped[str | None] = mapped_column(Text)
+    # Отчёты новых агентов скрининга
+    report_fraud:           Mapped[str | None] = mapped_column(Text)
+    report_language:        Mapped[str | None] = mapped_column(Text)
+    report_red_flags:       Mapped[str | None] = mapped_column(Text)
+    report_interview_score: Mapped[str | None] = mapped_column(Text)
     created_at:   Mapped[str]
     finished_at:  Mapped[str | None]
