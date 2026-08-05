@@ -144,13 +144,26 @@ async def _run_json_agent(
         return {"error": "exception", "detail": str(exc)}
 
 
+def _safe_score(raw: object, lo: float = 0.0, hi: float = 10.0) -> float:
+    """Приводит score от LLM к числу в диапазоне [lo, hi].
+
+    Модель иногда возвращает строки, None или значения вне шкалы (15 вместо 0–10).
+    Невалидное значение трактуем как 0, валидное — клэмпим в диапазон.
+    """
+    try:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return lo
+    return max(lo, min(hi, value))
+
+
 def _compute_total_score(scores: dict[str, Any]) -> float:
     """Считает итоговый балл из критериев по весам. Делается в Python, не в AI."""
     total = 0.0
     for key, weight in _WEIGHTS.items():
         criterion = scores.get(key, {})
-        score = criterion.get("score", 0) if isinstance(criterion, dict) else 0
-        total += float(score) * weight
+        raw = criterion.get("score", 0) if isinstance(criterion, dict) else 0
+        total += _safe_score(raw) * weight
     return round(total, 2)
 
 
