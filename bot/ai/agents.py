@@ -12,7 +12,6 @@
 Итоговый балл считается в Python (мотивация 30%, опыт 30%, коммуникация 20%, риски 20%).
 Language AI включается только для должностей, требующих грамотного общения.
 """
-
 from __future__ import annotations
 
 import asyncio
@@ -37,6 +36,14 @@ from bot.ai.prompts import (
     JOB_MATCH_SYSTEM,
     RESUME_SYSTEM,
 )
+from bot.ai.schemas import (
+    CommunicationResult,
+    DecisionResult,
+    IntegrityResult,
+    JobMatchResult,
+    ResumeResult,
+    parse_agent_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +55,10 @@ _LANGUAGE_SENSITIVE_POSITIONS = {
 
 # Веса для итогового балла (должны давать 1.0 в сумме)
 _WEIGHTS = {
-    "motivation": 0.30,
-    "experience": 0.30,
+    "motivation":    0.30,
+    "experience":    0.30,
     "communication": 0.20,
-    "integrity": 0.20,
+    "integrity":     0.20,
 }
 
 # ---------------------------------------------------------------------------
@@ -110,12 +117,12 @@ def _safe_score(raw: object, lo: float = 0.0, hi: float = 10.0) -> float:
     return max(lo, min(hi, value))
 
 
-def _compute_total_score(scores: dict[str, Any]) -> float:
+def _compute_total_score(dec: DecisionResult) -> float:
     """Считает итоговый балл из критериев по весам. Делается в Python, не в AI."""
     total = 0.0
     for key, weight in _WEIGHTS.items():
-        criterion = scores.get(key, {})
-        raw = criterion.get("score", 0) if isinstance(criterion, dict) else 0
+        criterion = getattr(dec.scores, key, None)
+        raw = criterion.score if criterion is not None else 0
         total += _safe_score(raw) * weight
     return round(total, 2)
 
@@ -124,19 +131,6 @@ def _is_language_sensitive(form_data: dict) -> bool:
     """Нужна ли оценка грамотности для данной позиции."""
     position = str(form_data.get("position") or form_data.get("должность", "")).lower()
     return any(p in position for p in _LANGUAGE_SENSITIVE_POSITIONS)
-
-
-def _to_str_list(value: object) -> list[str]:
-    """Безопасно приводит любое значение к списку строк для join/slice."""
-    if isinstance(value, list):
-        return [str(v) for v in value]
-    if isinstance(value, (set, frozenset, tuple)):
-        return [str(v) for v in value]
-    if isinstance(value, dict):
-        return [str(k) for k in value]
-    if isinstance(value, str) and value:
-        return [value]
-    return []
 
 
 # ---------------------------------------------------------------------------
@@ -148,96 +142,97 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
 
     Returns:
         {
-            "resume": dict,        # Resume Extractor JSON
-            "communication": dict, # Communication AI JSON
-            "integrity": dict,     # Integrity AI JSON (Fraud + RedFlags)
-            "job_match": dict,     # Job Match AI JSON
-            "decision": dict,      # Hiring Decision AI JSON
-            "total_score": float | None,  # рассчитан в Python; None, если Decision AI упал
-            "status": str,         # completed | partial | needs_manual_review
-            "failed_agents": list[str],  # имена агентов, вернувших ошибку
-            "summary": str,        # краткий текст для HR-чата
+            "resume":        ResumeResult (сериализованный dict),
+            "communication": CommunicationResult,
+            "integrity":     IntegrityResult,
+            "job_match":     JobMatchResult,
+            "decision":      DecisionResult  (total_score проставлен Python),
+            "total_score":   float | None,
+            "status":        "completed" | "partial" | "needs_manual_review",
+            "failed_agents": list[str],
+            "summary":       str,
         }
     """
     context = _base_context(form_data, qa_log)
 
     # ── Уровень 2: Resume Extractor ───────────────────────────────────────
-    resume_data = await _run_json_agent(
+    raw_resume = await _run_json_agent(
         RESUME_SYSTEM, context, max_tokens=400, model=RESUME_MODEL,
     )
-    if "error" in resume_data:
+    if "error" in raw_resume:
         # Resume критичен для уровней 4–5: даём второй шанс
         logger.warning(
-            "Resume Extractor упал (%s), повторный запрос", resume_data.get("error"),
+            "Resume Extractor упал (%s), повторный запрос", raw_resume.get("error"),
         )
-        resume_data = await _run_json_agent(
+        raw_resume = await _run_json_agent(
             RESUME_SYSTEM, context, max_tokens=400, model=RESUME_MODEL,
         )
+    resume = parse_agent_result(ResumeResult, raw_resume, "resume")
 
     # ── Уровень 3: Communication + Integrity параллельно ─────────────────
-    comm_result, integrity_result = await asyncio.gather(
+    raw_comm_res, raw_integrity_res = await asyncio.gather(
         _run_json_agent(COMMUNICATION_SYSTEM, context, max_tokens=400, model=COMMUNICATION_MODEL),
-        _run_json_agent(INTEGRITY_SYSTEM, context, max_tokens=500, model=INTEGRITY_MODEL),
+        _run_json_agent(INTEGRITY_SYSTEM,     context, max_tokens=500, model=INTEGRITY_MODEL),
         return_exceptions=True,
     )
 
-    def _safe_dict(val: object) -> dict[str, Any]:
+    def _safe_raw(val: object, name: str) -> dict[str, Any]:
         if isinstance(val, Exception):
-            logger.error("Агент упал: %s", val)
+            logger.error("Агент %s упал: %s", name, val)
             return {"error": "exception", "detail": str(val)}
         return val  # type: ignore[return-value]
 
-    comm_data      = _safe_dict(comm_result)
-    integrity_data = _safe_dict(integrity_result)
+    comm      = parse_agent_result(CommunicationResult, _safe_raw(raw_comm_res,      "communication"), "communication")
+    integrity = parse_agent_result(IntegrityResult,     _safe_raw(raw_integrity_res, "integrity"),     "integrity")
 
     # ── Уровень 4: Job Match — получает Resume + Communication + Integrity ─
     level3_context = (
         context
         + "\n\n=== RESUME EXTRACTOR ===\n"
-        + json.dumps(resume_data, ensure_ascii=False)
+        + json.dumps(resume.model_dump(), ensure_ascii=False)
         + "\n\n=== COMMUNICATION AI ===\n"
-        + json.dumps(comm_data, ensure_ascii=False)
+        + json.dumps(comm.model_dump(), ensure_ascii=False)
         + "\n\n=== INTEGRITY AI ===\n"
-        + json.dumps(integrity_data, ensure_ascii=False)
+        + json.dumps(integrity.model_dump(), ensure_ascii=False)
     )
-    job_match_data = await _run_json_agent(
+    raw_job_match = await _run_json_agent(
         JOB_MATCH_SYSTEM, level3_context, max_tokens=400, model=JOB_MATCH_MODEL,
     )
+    job_match = parse_agent_result(JobMatchResult, raw_job_match, "job_match")
 
     # ── Уровень 5: Hiring Decision — получает ВСЁ ─────────────────────────
     level4_context = (
         level3_context
         + "\n\n=== JOB MATCH AI ===\n"
-        + json.dumps(job_match_data, ensure_ascii=False)
+        + json.dumps(job_match.model_dump(), ensure_ascii=False)
     )
-    decision_data = await _run_json_agent(
+    raw_decision = await _run_json_agent(
         HIRING_DECISION_SYSTEM, level4_context, max_tokens=600, model=HIRING_DECISION_MODEL,
     )
+    decision = parse_agent_result(DecisionResult, raw_decision, "decision")
 
-    # Собираем упавших агентов — без тихих провалов
-    failed_agents: list[str] = []
-    for agent_name, data in (
-        ("resume", resume_data),
-        ("communication", comm_data),
-        ("integrity", integrity_data),
-        ("job_match", job_match_data),
-        ("decision", decision_data),
-    ):
-        if "error" in data:
-            failed_agents.append(agent_name)
+    # Собираем упавших агентов
+    failed_agents: list[str] = [
+        name for name, obj in (
+            ("resume",        resume),
+            ("communication", comm),
+            ("integrity",     integrity),
+            ("job_match",     job_match),
+            ("decision",      decision),
+        )
+        if obj.error is not None
+    ]
 
     # Итоговый балл считается в Python по весам.
-    # Если Decision AI упал — не считаем балл (иначе кандидат получит тихий 0)
-    # и помечаем заявку на ручную проверку.
     if "decision" in failed_agents:
         total: float | None = None
-        decision_data["total_score"] = None
-        decision_data["decision"] = "needs_manual_review"
+        decision.decision    = "needs_manual_review"
+        decision.total_score = 0.0
     else:
-        total = _compute_total_score(decision_data.get("scores", {}))
-        decision_data["total_score"] = total
+        total                = _compute_total_score(decision)
+        decision.total_score = total
 
-    # Статус пайплайна: нужна ли ручная проверка
+    # Статус пайплайна
     if "decision" in failed_agents:
         status = "needs_manual_review"
     elif failed_agents:
@@ -245,10 +240,9 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
     else:
         status = "completed"
 
-    # ── Краткий текст для HR-чата (без AI, только Python) ─────────────────
-    summary = _build_summary_text(resume_data, decision_data, job_match_data, integrity_data)
+    # Краткий текст для HR-чата (без AI, только Python)
+    summary = _build_summary_text(resume, decision, job_match, integrity)
 
-    # Явно помечаем незавершённую оценку в отчёте для HR
     if failed_agents:
         summary = (
             "⚠️ AI-оценка не завершена, требуется ручная проверка "
@@ -257,16 +251,17 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
         )
 
     return {
-        "resume":       resume_data,
-        "communication": comm_data,
-        "integrity":    integrity_data,
-        "job_match":    job_match_data,
-        "decision":     decision_data,
-        "total_score":  total,
-        "status":       status,
+        "resume":        resume.model_dump(),
+        "communication": comm.model_dump(),
+        "integrity":     integrity.model_dump(),
+        "job_match":     job_match.model_dump(),
+        "decision":      decision.model_dump(),
+        "total_score":   total,
+        "status":        status,
         "failed_agents": failed_agents,
-        "summary":      summary,
+        "summary":       summary,
     }
+
 
 # ---------------------------------------------------------------------------
 # Форматирование текстового отчёта (Python, без AI)
@@ -290,62 +285,52 @@ _RISK_LABELS = {
 
 
 def _build_summary_text(
-    resume: dict,
-    decision: dict,
-    job_match: dict,
-    integrity: dict,
+    resume:    ResumeResult,
+    decision:  DecisionResult,
+    job_match: JobMatchResult,
+    integrity: IntegrityResult,
 ) -> str:
-    """Строит читаемый текст отчёта для HR из JSON-ответов агентов."""
+    """Строит читаемый текст отчёта для HR из типизированных объектов."""
     lines: list[str] = []
 
     # Кандидат
-    cand     = resume.get("candidate", {})
-    name     = cand.get("name", "—") if isinstance(cand, dict) else "—"
-    age      = cand.get("age", "—")  if isinstance(cand, dict) else "—"
-    position = cand.get("position", "—") if isinstance(cand, dict) else "—"
-    lines.append(f"👤 {name}, {age} лет — {position}")
+    c = resume.candidate
+    lines.append(f"👤 {c.name or '—'}, {c.age or '—'} лет — {c.position_applied or '—'}")
 
-    # Итоговый балл (None — оценка не завершена, см. предупреждение выше)
-    total = decision.get("total_score")
-    if total is None:
+    # Итоговый балл
+    if decision.total_score == 0.0 and decision.error:
         lines.append("📊 Балл: — | ⚠️ Требуется ручная проверка")
     else:
-        decision_key   = decision.get("decision", "")
-        decision_label = _DECISION_LABELS.get(decision_key, decision_key)
-        lines.append(f"📊 Балл: {total}/10 | {decision_label}")
+        decision_label = _DECISION_LABELS.get(decision.decision, decision.decision)
+        lines.append(f"📊 Балл: {decision.total_score}/10 | {decision_label}")
 
     # Приоритет
-    priority_key = decision.get("priority", "")
-    if priority_key:
-        lines.append(f"🎯 Приоритет: {_PRIORITY_LABELS.get(priority_key, priority_key)}")
+    if decision.priority:
+        lines.append(f"🎯 Приоритет: {_PRIORITY_LABELS.get(decision.priority, decision.priority)}")
 
     # Соответствие вакансии
-    match_pct = job_match.get("match_percent")
-    if match_pct is not None:
-        lines.append(f"💼 Соответствие: {match_pct}%")
+    if job_match.match_percent:
+        lines.append(f"💼 Соответствие: {job_match.match_percent}%")
 
     # Риски
-    risk = integrity.get("risk_level", "")
-    if risk:
-        lines.append(f"🛡 Риски: {_RISK_LABELS.get(risk, risk)}")
+    if integrity.risk_level:
+        lines.append(f"🛡 Риски: {_RISK_LABELS.get(integrity.risk_level, integrity.risk_level)}")
 
     # Причины решения
-    reasons = _to_str_list(decision.get("reasons"))
-    if reasons:
+    if decision.reasons:
         lines.append("\n Ключевые факты: ")
-        for r in reasons[:4]:
+        for r in decision.reasons[:4]:
             lines.append(f"  • {r}")
 
     # Вопросы для HR
-    questions = _to_str_list(decision.get("questions_for_hr"))
-    if questions:
+    if decision.questions_for_hr:
         lines.append("\n Уточнить на очном интервью: ")
-        for q in questions[:3]:
+        for q in decision.questions_for_hr[:3]:
             lines.append(f"  ❓ {q}")
 
-    # Скиллы — безопасный срез через _to_str_list
-    skills = _to_str_list(resume.get("skills"))
-    if skills:
-        lines.append(f"\n Навыки: {', '.join(skills[:6])}")
+    # Навыки
+    all_skills = resume.skills.hard + resume.skills.soft
+    if all_skills:
+        lines.append(f"\n Навыки: {', '.join(all_skills[:6])}")
 
     return "\n".join(lines)
