@@ -304,9 +304,9 @@ async def handle_med_book(message: Message, state: FSMContext) -> None:
     await state.update_data(med_book=None if text == _skip_text(lang) else text)
     await state.set_state(Form.waiting_photo)
     await message.answer(
-    _t(lang, "ask_photo"),
-    reply_markup=kb.get_cancel_keyboard(lang),
-    parse_mode="HTML",
+        _t(lang, "ask_photo"),
+        reply_markup=kb.get_cancel_keyboard(lang),
+        parse_mode="HTML",
     )
 
 
@@ -318,22 +318,21 @@ async def handle_photo(message: Message, state: FSMContext) -> None:
     lang = _lang(data)
 
     if message.text == _skip_text(lang):
-    await state.update_data(photo=None)
+        await state.update_data(photo=None)
     elif message.photo:
-    photo_id = message.photo[-1].file_id
-    await state.update_data(photo=photo_id)
+        photo_id = message.photo[-1].file_id
+        await state.update_data(photo=photo_id)
     else:
-    await message.answer(
-        _t(lang, "ask_photo"),
-        reply_markup=kb.get_cancel_keyboard(lang),
-        parse_mode="HTML",
-    )
-    return
+        await message.answer(
+            _t(lang, "ask_photo"),
+            reply_markup=kb.get_cancel_keyboard(lang),
+            parse_mode="HTML",
+        )
+        return
 
     await state.set_state(Form.waiting_video)
     await message.answer(
-    _t(lang, "ask_video"),
-    reply_markup=kb.get_cancel_keyboard(lang),
-    )
-    parse_mode="HTML",
+        _t(lang, "ask_video"),
+        reply_markup=kb.get_cancel_keyboard(lang),
+        parse_mode="HTML",
     )
