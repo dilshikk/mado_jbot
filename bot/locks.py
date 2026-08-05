@@ -5,7 +5,8 @@ aiogram запускается в одном event-loop, поэтому process-
 достаточно для сериализации критических секций внутри одного процесса
 (Telegram никогда не доставляет update-ы из одного чата параллельно).
 
-Использование:
+Использование::
+
     async with submission_lock(user_id):
         # проверка статуса + INSERT -- атомарно
 
@@ -26,6 +27,7 @@ _interview_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 def submission_lock(user_id: int) -> asyncio.Lock:
     """Возвращает лок для данного user_id.
+
     Обеспечивает атомарность проверки-статуса + сохранения анкеты.
     """
     return _submission_locks[user_id]
@@ -33,6 +35,7 @@ def submission_lock(user_id: int) -> asyncio.Lock:
 
 def interview_lock(session_id: int) -> asyncio.Lock:
     """Возвращает лок для данной interview_session_id.
+
     Обеспечивает атомарность проверки-report_decision + run_all_agents.
     """
     return _interview_locks[session_id]
