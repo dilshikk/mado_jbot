@@ -24,4 +24,6 @@ class Application(Base):
     hr_comment:       Mapped[str | None]
     hr_video_msg_id:  Mapped[int | None]
     experience:       Mapped[str | None]
+    # ID станции метро из таблицы metro_stations (None = не указано / пропущено)
+    metro_station_id: Mapped[int | None]
     created_at:       Mapped[str]
