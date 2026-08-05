@@ -61,6 +61,46 @@ def get_metro_stations_keyboard(
     rows.append([InlineKeyboardButton(text=_cancel_text(lang), callback_data="metro_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
+# ─── Языки владения (мультиселект) ───────────────────────────
+
+# code → (label_ru, label_uz)
+_LANGUAGE_OPTIONS: tuple[tuple[str, str, str], ...] = (
+    ("ru",    "Русский",    "Rus tili"),
+    ("uz",    "Узбекский",  "O'zbek tili"),
+    ("en",    "Английский", "Ingliz tili"),
+    ("tr",    "Турецкий",   "Turk tili"),
+    ("other", "Другой",     "Boshqa"),
+)
+
+def get_languages_inline_keyboard(
+    lang: str,
+    selected: list[str] | set[str],
+) -> InlineKeyboardMarkup:
+    """Inline-клавиатура мультивыбора языков.
+
+    selected — уже выбранные коды языков (например ["ru", "en"]).
+    Выбранные помечаются ✅. Нижний ряд: «Готово» / «Пропустить».
+    Callback-данные согласованы с bot/handlers/user/form_extra.py:
+    lang_toggle:<code>, lang_done, lang_skip.
+    """
+    selected_set = set(selected)
+    rows: list[list[InlineKeyboardButton]] = []
+    for code, label_ru, label_uz in _LANGUAGE_OPTIONS:
+        label = label_uz if lang == "uz" else label_ru
+        prefix = "✅ " if code in selected_set else ""
+        rows.append([InlineKeyboardButton(
+            text=prefix + label,
+            callback_data=f"lang_toggle:{code}",
+        )])
+
+    done_text = "✅ Tayyor" if lang == "uz" else "✅ Готово"
+    skip_text = "⏭ O'tkazib yuborish" if lang == "uz" else "⏭ Пропустить"
+    rows.append([
+        InlineKeyboardButton(text=done_text, callback_data="lang_done"),
+        InlineKeyboardButton(text=skip_text, callback_data="lang_skip"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 # ─── HR-клавиатуры ───────────────────────────────────────────
 
 def get_score_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
