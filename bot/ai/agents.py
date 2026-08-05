@@ -23,7 +23,14 @@ import re
 from typing import Any
 
 from bot.ai.client import cf_chat
-from bot.ai.models import LLAMA_70B, LLAMA_8B
+from bot.ai.models import (
+    LLAMA_70B,
+    COMMUNICATION_MODEL,
+    HIRING_DECISION_MODEL,
+    INTEGRITY_MODEL,
+    JOB_MATCH_MODEL,
+    RESUME_MODEL,
+)
 from bot.ai.prompts import (
     COMMUNICATION_SYSTEM,
     HIRING_DECISION_SYSTEM,
@@ -180,19 +187,31 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
             "integrity": dict,     # Integrity AI JSON (Fraud + RedFlags)
             "job_match": dict,     # Job Match AI JSON
             "decision": dict,      # Hiring Decision AI JSON
-            "total_score": float,  # рассчитан в Python
+            "total_score": float | None,  # рассчитан в Python; None, если Decision AI упал
+            "status": str,         # completed | partial | needs_manual_review
+            "failed_agents": list[str],  # имена агентов, вернувших ошибку
             "summary": str,        # краткий текст для HR-чата
         }
     """
     context = _base_context(form_data, qa_log)
 
     # ── Уровень 2: Resume Extractor ───────────────────────────────────────
-    resume_data = await _run_json_agent(RESUME_SYSTEM, context, max_tokens=400)
+    resume_data = await _run_json_agent(
+        RESUME_SYSTEM, context, max_tokens=400, model=RESUME_MODEL,
+    )
+    if "error" in resume_data:
+        # Resume критичен для уровней 4–5: даём второй шанс
+        logger.warning(
+            "Resume Extractor упал (%s), повторный запрос", resume_data.get("error"),
+        )
+        resume_data = await _run_json_agent(
+            RESUME_SYSTEM, context, max_tokens=400, model=RESUME_MODEL,
+        )
 
     # ── Уровень 3: Communication + Integrity параллельно ─────────────────
     comm_result, integrity_result = await asyncio.gather(
-        _run_json_agent(COMMUNICATION_SYSTEM, context, max_tokens=400),
-        _run_json_agent(INTEGRITY_SYSTEM, context, max_tokens=500),
+        _run_json_agent(COMMUNICATION_SYSTEM, context, max_tokens=400, model=COMMUNICATION_MODEL),
+        _run_json_agent(INTEGRITY_SYSTEM, context, max_tokens=500, model=INTEGRITY_MODEL),
         return_exceptions=True,
     )
 
@@ -215,7 +234,9 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
         + "\n\n=== INTEGRITY AI ===\n"
         + json.dumps(integrity_data, ensure_ascii=False)
     )
-    job_match_data = await _run_json_agent(JOB_MATCH_SYSTEM, level3_context, max_tokens=400)
+    job_match_data = await _run_json_agent(
+        JOB_MATCH_SYSTEM, level3_context, max_tokens=400, model=JOB_MATCH_MODEL,
+    )
 
     # ── Уровень 5: Hiring Decision — получает ВСЁ ─────────────────────────
     level4_context = (
@@ -224,16 +245,50 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
         + json.dumps(job_match_data, ensure_ascii=False)
     )
     decision_data = await _run_json_agent(
-        HIRING_DECISION_SYSTEM, level4_context, max_tokens=600, model=LLAMA_70B,
+        HIRING_DECISION_SYSTEM, level4_context, max_tokens=600, model=HIRING_DECISION_MODEL,
     )
 
-    # Итоговый балл считается в Python по весам
-    scores = decision_data.get("scores", {})
-    total  = _compute_total_score(scores)
-    decision_data["total_score"] = total
+    # Собираем упавших агентов — без тихих провалов
+    failed_agents: list[str] = []
+    for agent_name, data in (
+        ("resume", resume_data),
+        ("communication", comm_data),
+        ("integrity", integrity_data),
+        ("job_match", job_match_data),
+        ("decision", decision_data),
+    ):
+        if "error" in data:
+            failed_agents.append(agent_name)
+
+    # Итоговый балл считается в Python по весам.
+    # Если Decision AI упал — не считаем балл (иначе кандидат получит тихий 0)
+    # и помечаем заявку на ручную проверку.
+    if "decision" in failed_agents:
+        total: float | None = None
+        decision_data["total_score"] = None
+        decision_data["decision"] = "needs_manual_review"
+    else:
+        total = _compute_total_score(decision_data.get("scores", {}))
+        decision_data["total_score"] = total
+
+    # Статус пайплайна: нужна ли ручная проверка
+    if "decision" in failed_agents:
+        status = "needs_manual_review"
+    elif failed_agents:
+        status = "partial"
+    else:
+        status = "completed"
 
     # ── Краткий текст для HR-чата (без AI, только Python) ─────────────────
     summary = _build_summary_text(resume_data, decision_data, job_match_data, integrity_data)
+
+    # Явно помечаем незавершённую оценку в отчёте для HR
+    if failed_agents:
+        summary = (
+            "⚠️ AI-оценка не завершена, требуется ручная проверка "
+            f"(ошибки: {', '.join(failed_agents)})\n\n"
+            + summary
+        )
 
     return {
         "resume":       resume_data,
@@ -242,6 +297,8 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
         "job_match":    job_match_data,
         "decision":     decision_data,
         "total_score":  total,
+        "status":       status,
+        "failed_agents": failed_agents,
         "summary":      summary,
     }
 
@@ -282,11 +339,14 @@ def _build_summary_text(
     position = cand.get("position", "—") if isinstance(cand, dict) else "—"
     lines.append(f"👤 {name}, {age} лет — {position}")
 
-    # Итоговый балл
-    total         = decision.get("total_score", 0)
-    decision_key  = decision.get("decision", "")
-    decision_label = _DECISION_LABELS.get(decision_key, decision_key)
-    lines.append(f"📊 Балл: {total}/10 | {decision_label}")
+    # Итоговый балл (None — оценка не завершена, см. предупреждение выше)
+    total = decision.get("total_score")
+    if total is None:
+        lines.append("📊 Балл: — | ⚠️ Требуется ручная проверка")
+    else:
+        decision_key   = decision.get("decision", "")
+        decision_label = _DECISION_LABELS.get(decision_key, decision_key)
+        lines.append(f"📊 Балл: {total}/10 | {decision_label}")
 
     # Приоритет
     priority_key = decision.get("priority", "")
