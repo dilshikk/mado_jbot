@@ -158,26 +158,13 @@ async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
         )
         return
     await state.update_data(phone=phone)
-    await message.answer(LOCALIZATION[lang]["ask_metro"], reply_markup=kb.get_metro_keyboard(lang), parse_mode="HTML")
-    await state.set_state(Form.waiting_metro)
+    # Шаг выбора метро — полностью через inline-клавиатуру (metro.py)
+    from bot.handlers.user.metro import ask_metro  # noqa: PLC0415
+    await ask_metro(message, state, lang)
 
 
-@router.message(Form.waiting_metro)
-async def process_metro(message: Message, state: FSMContext, lang: str) -> None:
-    text = (message.text or "").strip()
-    skip_value = LOCALIZATION[lang].get("metro_skip", LOCALIZATION[lang]["btn_skip"])
-    valid_values = {
-        button.text
-        for row in kb.get_metro_keyboard(lang).keyboard
-        for button in row
-        if button.text != LOCALIZATION[lang]["btn_cancel"]
-    }
-    if text not in valid_values:
-        await message.answer(LOCALIZATION[lang]["ask_metro"], reply_markup=kb.get_metro_keyboard(lang), parse_mode="HTML")
-        return
-    await state.update_data(metro=None if text == skip_value else text)
-    await message.answer(LOCALIZATION[lang]["ask_languages"], reply_markup=kb.get_languages_keyboard(lang), parse_mode="HTML")
-    await state.set_state(Form.waiting_languages)
+# ВАЖНО: обработчик process_metro (reply-клавиатура) удалён.
+# Выбор станции метро полностью обрабатывается в metro.py через callback_query.
 
 
 # ── Раздел «Информация о работе»: должность → готовность → опыт → ... ──
@@ -281,17 +268,8 @@ async def process_confirmation(
 
 async def _do_save_application(session: AsyncSession, user, data: dict) -> int:
     """Сохраняет анкету в БД. Вызывается внутри submission_lock или для админа."""
-    metro_station_id: int | None = None
-    metro_name = data.get("metro")
-    if metro_name:
-        for line in ("red", "blue", "circle"):
-            stations = await db.get_metro_stations_by_line(session, line)
-            for s in stations:
-                if metro_name in (s.get("name_ru"), s.get("name_uz")):
-                    metro_station_id = s["id"]
-                    break
-            if metro_station_id:
-                break
+    # metro_station_id сохраняется напрямую из inline-выбора в metro.py
+    metro_station_id: int | None = data.get("metro_station_id")
 
     return await db.save_application(
         session,
