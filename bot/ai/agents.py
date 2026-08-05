@@ -1,12 +1,12 @@
 # bot/ai/agents.py
 """5-уровневый AI-пайплайн оценки кандидата.
 
-Уровень 1 — Interview AI            (уже отработал до вызова агентов)
-Уровень 2 — Resume Extractor AI     (1 запрос, JSON-структура)
-Уровень 3 — Communication AI        (параллельно)
-            Integrity AI             (параллельно)
-Уровень 4 — Job Match AI            (1 запрос, видит уровни 2+3)
-Уровень 5 — Hiring Decision AI      (1 запрос, видит всё)
+Уровень 1 — Interview AI (уже отработал до вызова агентов)
+Уровень 2 — Resume Extractor AI (1 запрос, JSON-структура)
+Уровень 3 — Communication AI (параллельно)
+             Integrity AI (параллельно)
+Уровень 4 — Job Match AI (1 запрос, видит уровни 2+3)
+Уровень 5 — Hiring Decision AI (1 запрос, видит всё)
 
 Итого: 5 запросов вместо 9. Все ответы — строгий JSON.
 Итоговый балл считается в Python (мотивация 30%, опыт 30%, коммуникация 20%, риски 20%).
@@ -15,9 +15,11 @@ Language AI включается только для должностей, тр�
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import logging
+import re
 from typing import Any
 
 from bot.ai.client import cf_chat
@@ -40,17 +42,15 @@ _LANGUAGE_SENSITIVE_POSITIONS = {
 
 # Веса для итогового балла (должны давать 1.0 в сумме)
 _WEIGHTS = {
-    "motivation":    0.30,
-    "experience":    0.30,
+    "motivation": 0.30,
+    "experience": 0.30,
     "communication": 0.20,
-    "integrity":     0.20,
+    "integrity": 0.20,
 }
-
 
 # ---------------------------------------------------------------------------
 # Внутренние хелперы
 # ---------------------------------------------------------------------------
-
 
 def _base_context(form_data: dict, qa_log: list[dict]) -> str:
     """Формирует единый текстовый контекст для всех агентов."""
@@ -67,6 +67,46 @@ def _base_context(form_data: dict, qa_log: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _extract_json(text: str) -> dict[str, Any] | None:
+    """Пытается извлечь dict из строки.
+
+    Порядок попыток:
+    1. json.loads на весь текст
+    2. json.loads на первый {...} фрагмент
+    3. ast.literal_eval — для Python-style ответов модели
+       (одинарные кавычки, True/False/None вместо true/false/null)
+    """
+    # 1. Весь текст как JSON
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # 2. Ищем первый {...} фрагмент
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        candidate = match.group()
+
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # 3. ast.literal_eval — CF Workers AI иногда возвращает Python-dict
+        try:
+            parsed = ast.literal_eval(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except (ValueError, SyntaxError):
+            pass
+
+    return None
+
+
 async def _run_json_agent(
     system_prompt: str,
     user_content: str,
@@ -76,7 +116,7 @@ async def _run_json_agent(
     """Запрашивает агента, всегда возвращает dict (никогда не кидает исключений)."""
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user",   "content": user_content},
+        {"role": "user", "content": user_content},
     ]
     try:
         result = await cf_chat(model, messages, max_tokens=max_tokens)
@@ -91,18 +131,13 @@ async def _run_json_agent(
         else:
             text = str(result)
 
-        # Вырезаем JSON из ответа (модель иногда добавляет текст вокруг)
-        start = text.find("{")
-        end   = text.rfind("}") + 1
-        if start != -1 and end > start:
-            return json.loads(text[start:end])
+        parsed = _extract_json(text)
+        if parsed is not None:
+            return parsed
 
         logger.warning("Агент не вернул JSON: %s", text[:200])
         return {"error": "no_json", "raw": text[:500]}
 
-    except json.JSONDecodeError as exc:
-        logger.warning("JSON decode error: %s", exc)
-        return {"error": "invalid_json"}
     except Exception as exc:
         logger.error("Агент упал: %s", exc, exc_info=True)
         return {"error": "exception", "detail": str(exc)}
@@ -117,30 +152,27 @@ def _compute_total_score(scores: dict[str, Any]) -> float:
         total += float(score) * weight
     return round(total, 2)
 
-
 def _is_language_sensitive(form_data: dict) -> bool:
     """Нужна ли оценка грамотности для данной позиции."""
     position = str(form_data.get("position") or form_data.get("должность", "")).lower()
     return any(p in position for p in _LANGUAGE_SENSITIVE_POSITIONS)
 
-
 # ---------------------------------------------------------------------------
 # Основная точка входа
 # ---------------------------------------------------------------------------
-
 
 async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
     """Запускает 5-уровневый пайплайн оценки кандидата.
 
     Returns:
         {
-            "resume":    dict,   # Resume Extractor JSON
-            "communication": dict,   # Communication AI JSON
-            "integrity": dict,   # Integrity AI JSON (Fraud + RedFlags)
-            "job_match": dict,   # Job Match AI JSON
-            "decision":  dict,   # Hiring Decision AI JSON
+            "resume": dict,        # Resume Extractor JSON
+            "communication": dict, # Communication AI JSON
+            "integrity": dict,     # Integrity AI JSON (Fraud + RedFlags)
+            "job_match": dict,     # Job Match AI JSON
+            "decision": dict,      # Hiring Decision AI JSON
             "total_score": float,  # рассчитан в Python
-            "summary":   str,    # краткий текст для HR-чата
+            "summary": str,        # краткий текст для HR-чата
         }
     """
     context = _base_context(form_data, qa_log)
@@ -161,7 +193,7 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
             return {"error": "exception", "detail": str(val)}
         return val  # type: ignore[return-value]
 
-    comm_data      = _safe_dict(comm_result)
+    comm_data = _safe_dict(comm_result)
     integrity_data = _safe_dict(integrity_result)
 
     # ── Уровень 4: Job Match — получает Resume + Communication + Integrity ─
@@ -188,43 +220,41 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
 
     # Итоговый балл считается в Python по весам
     scores = decision_data.get("scores", {})
-    total  = _compute_total_score(scores)
+    total = _compute_total_score(scores)
     decision_data["total_score"] = total
 
     # ── Краткий текст для HR-чата (без AI, только Python) ─────────────────
     summary = _build_summary_text(resume_data, decision_data, job_match_data, integrity_data)
 
     return {
-        "resume":        resume_data,
+        "resume": resume_data,
         "communication": comm_data,
-        "integrity":     integrity_data,
-        "job_match":     job_match_data,
-        "decision":      decision_data,
-        "total_score":   total,
-        "summary":       summary,
+        "integrity": integrity_data,
+        "job_match": job_match_data,
+        "decision": decision_data,
+        "total_score": total,
+        "summary": summary,
     }
-
 
 # ---------------------------------------------------------------------------
 # Форматирование текстового отчёта (Python, без AI)
 # ---------------------------------------------------------------------------
 
 _DECISION_LABELS = {
-    "invite":  "✅ Пригласить на собеседование",
-    "review":  "⚠️ Рассмотреть",
-    "reject":  "❌ Отклонить",
+    "invite": "✅ Пригласить на собеседование",
+    "review": "⚠️ Рассмотреть",
+    "reject": "❌ Отклонить",
 }
 _PRIORITY_LABELS = {
-    "high":   "🔴 Высокий",
+    "high": "🔴 Высокий",
     "medium": "🟡 Средний",
-    "low":    "🟢 Низкий",
+    "low": "🟢 Низкий",
 }
 _RISK_LABELS = {
-    "low":    "🟢 Низкий",
+    "low": "🟢 Низкий",
     "medium": "🟡 Средний",
-    "high":   "🔴 Высокий",
+    "high": "🔴 Высокий",
 }
-
 
 def _build_summary_text(
     resume: dict,
@@ -237,16 +267,16 @@ def _build_summary_text(
 
     # Кандидат
     cand = resume.get("candidate", {})
-    name     = cand.get("name", "—")
-    age      = cand.get("age", "—")
+    name = cand.get("name", "—")
+    age = cand.get("age", "—")
     position = cand.get("position", "—")
-    lines.append(f"👤 <b>{name}</b>, {age} лет — {position}")
+    lines.append(f"👤 {name}, {age} лет — {position}")
 
     # Итоговый балл
     total = decision.get("total_score", 0)
     decision_key = decision.get("decision", "")
     decision_label = _DECISION_LABELS.get(decision_key, decision_key)
-    lines.append(f"📊 Балл: <b>{total}/10</b>  |  {decision_label}")
+    lines.append(f"📊 Балл: {total}/10 | {decision_label}")
 
     # Приоритет
     priority_key = decision.get("priority", "")
@@ -266,20 +296,20 @@ def _build_summary_text(
     # Причины решения
     reasons = decision.get("reasons") or []
     if reasons:
-        lines.append("\n<b>Ключевые факты:</b>")
+        lines.append("\n Ключевые факты: ")
         for r in reasons[:4]:
-            lines.append(f"  • {r}")
+            lines.append(f" • {r}")
 
     # Вопросы для HR
     questions = decision.get("questions_for_hr") or []
     if questions:
-        lines.append("\n<b>Уточнить на очном интервью:</b>")
+        lines.append("\n Уточнить на очном интервью: ")
         for q in questions[:3]:
-            lines.append(f"  ❓ {q}")
+            lines.append(f" ❓ {q}")
 
     # Скиллы
     skills = resume.get("skills") or []
     if skills:
-        lines.append(f"\n<b>Навыки:</b> {', '.join(skills[:6])}")
+        lines.append(f"\n Навыки: {', '.join(skills[:6])}")
 
     return "\n".join(lines)
