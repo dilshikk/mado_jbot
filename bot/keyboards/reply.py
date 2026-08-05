@@ -159,5 +159,119 @@ def get_experience_keyboard(lang: str) -> ReplyKeyboardMarkup:
     )
 
 
+def get_experience_yn_keyboard(lang: str) -> ReplyKeyboardMarkup:
+    t = _texts(lang)
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            _row(KeyboardButton(text=t["exp_no"]), KeyboardButton(text=t["exp_yes"])),
+            _row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")),
+        ],
+        resize_keyboard=True,
+    )
+
+
+def get_readiness_keyboard(lang: str) -> ReplyKeyboardMarkup:
+    t = _texts(lang)
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            _row(KeyboardButton(text=t["readiness_today"]), KeyboardButton(text=t["readiness_tomorrow"])),
+            _row(KeyboardButton(text=t["readiness_week"]), KeyboardButton(text=t["readiness_two_weeks"])),
+            _row(KeyboardButton(text=t["readiness_month"])),
+            _row(_btn(lang, "btn_skip", "⏭ Пропустить")),
+            _row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")),
+        ],
+        resize_keyboard=True,
+    )
+
+
+def get_schedule_keyboard(lang: str) -> ReplyKeyboardMarkup:
+    t = _texts(lang)
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            _row(KeyboardButton(text=t["schedule_6_1"]), KeyboardButton(text=t["schedule_5_2"])),
+            _row(KeyboardButton(text=t["schedule_3_1"]), KeyboardButton(text=t["schedule_2_2"])),
+            _row(KeyboardButton(text=t["schedule_full"])),
+            _row(KeyboardButton(text=t["schedule_flex"]), KeyboardButton(text=t["schedule_any"])),
+            _row(_btn(lang, "btn_skip", "⏭ Пропустить")),
+            _row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")),
+        ],
+        resize_keyboard=True,
+    )
+
+
+def get_evening_shifts_keyboard(lang: str) -> ReplyKeyboardMarkup:
+    t = _texts(lang)
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            _row(
+                KeyboardButton(text=t["evening_yes"]),
+                KeyboardButton(text=t["evening_no"]),
+                KeyboardButton(text=t["evening_agreement"]),
+            ),
+            _row(_btn(lang, "btn_skip", "⏭ Пропустить")),
+            _row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")),
+        ],
+        resize_keyboard=True,
+    )
+
+
+def get_weekends_keyboard(lang: str) -> ReplyKeyboardMarkup:
+    t = _texts(lang)
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            _row(
+                KeyboardButton(text=t["weekends_yes"]),
+                KeyboardButton(text=t["weekends_no"]),
+                KeyboardButton(text=t["weekends_sometimes"]),
+            ),
+            _row(_btn(lang, "btn_skip", "⏭ Пропустить")),
+            _row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")),
+        ],
+        resize_keyboard=True,
+    )
+
+
+def get_smoking_keyboard(lang: str) -> ReplyKeyboardMarkup:
+    t = _texts(lang)
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            _row(KeyboardButton(text=t["smoking_no"]), KeyboardButton(text=t["smoking_yes"])),
+            _row(_btn(lang, "btn_skip", "⏭ Пропустить")),
+            _row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")),
+        ],
+        resize_keyboard=True,
+    )
+
+
+def get_med_book_keyboard(lang: str) -> ReplyKeyboardMarkup:
+    t = _texts(lang)
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            _row(
+                KeyboardButton(text=t["med_book_yes"]),
+                KeyboardButton(text=t["med_book_no"]),
+                KeyboardButton(text=t["med_book_in_progress"]),
+            ),
+            _row(_btn(lang, "btn_skip", "⏭ Пропустить")),
+            _row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")),
+        ],
+        resize_keyboard=True,
+    )
+
+
+def get_languages_keyboard(lang: str) -> ReplyKeyboardMarkup:
+    t = _texts(lang)
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            _row(KeyboardButton(text=t["lang_opt_ru"]), KeyboardButton(text=t["lang_opt_uz"])),
+            _row(KeyboardButton(text=t["lang_opt_en"]), KeyboardButton(text=t["lang_opt_tr"])),
+            _row(KeyboardButton(text=t["lang_opt_other"])),
+            _row(_btn(lang, "btn_skip", "⏭ Пропустить")),
+            _row(_btn(lang, "btn_cancel", "❌ Отменить заполнение")),
+        ],
+        resize_keyboard=True,
+    )
+
+
 def remove_keyboard() -> ReplyKeyboardRemove:
     return ReplyKeyboardRemove()
