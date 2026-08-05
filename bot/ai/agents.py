@@ -15,11 +15,9 @@ Language AI включается только для должностей, тр�
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import json
 import logging
-import re
 from typing import Any
 
 from bot.ai.client import cf_chat
@@ -31,6 +29,7 @@ from bot.ai.models import (
     JOB_MATCH_MODEL,
     RESUME_MODEL,
 )
+from bot.ai.parser import extract_json, extract_text
 from bot.ai.prompts import (
     COMMUNICATION_SYSTEM,
     HIRING_DECISION_SYSTEM,
@@ -74,45 +73,6 @@ def _base_context(form_data: dict, qa_log: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _extract_json(text: str) -> dict[str, Any]:
-    """Извлекает JSON из текста с тремя уровнями fallback:
-    1. json.loads на вырезанный блок {}
-    2. regex-чистка одиночных кавычек
-    3. ast.literal_eval (для Python-dict от CF Workers AI)
-    """
-    # Вырезаем первый блок { ... }
-    start = text.find("{")
-    end   = text.rfind("}") + 1
-    if start == -1 or end <= start:
-        return {"error": "no_json", "raw": text[:500]}
-
-    chunk = text[start:end]
-
-    # Попытка 1: стандартный json.loads
-    try:
-        return json.loads(chunk)
-    except json.JSONDecodeError:
-        pass
-
-    # Попытка 2: заменяем одиночные кавычки → двойные (CF Workers AI иногда возвращает Python-dict)
-    try:
-        fixed = re.sub(r"(?<![\\])'", '"', chunk)
-        return json.loads(fixed)
-    except (json.JSONDecodeError, Exception):
-        pass
-
-    # Попытка 3: ast.literal_eval
-    try:
-        result = ast.literal_eval(chunk)
-        if isinstance(result, dict):
-            return result
-    except Exception:
-        pass
-
-    logger.warning("_extract_json: все попытки не удались, raw=%s", chunk[:200])
-    return {"error": "invalid_json", "raw": chunk[:500]}
-
-
 async def _run_json_agent(
     system_prompt: str,
     user_content: str,
@@ -129,15 +89,8 @@ async def _run_json_agent(
         if not result:
             return {"error": "no_response"}
 
-        # Workers AI возвращает {"result": {"response": "..."}}
-        text: str = ""
-        if isinstance(result, dict):
-            inner = result.get("result", result)
-            text = inner.get("response", "") if isinstance(inner, dict) else str(inner)
-        else:
-            text = str(result)
-
-        return _extract_json(text)
+        text = extract_text(result) or ""
+        return extract_json(text)
 
     except Exception as exc:
         logger.error("Агент упал: %s", exc, exc_info=True)
