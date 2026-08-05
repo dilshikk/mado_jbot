@@ -140,11 +140,7 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
             "job_match": dict,   # Job Match AI JSON
             "decision":  dict,   # Hiring Decision AI JSON
             "total_score": float,  # рассчитан в Python
-            # Обратная совместимость:
             "summary":   str,    # краткий текст для HR-чата
-            "skills":    None,
-            "personality": None,
-            "job_match_text": None,
         }
     """
     context = _base_context(form_data, qa_log)
@@ -206,10 +202,6 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
         "decision":      decision_data,
         "total_score":   total,
         "summary":       summary,
-        # Обратная совместимость (старые поля)
-        "skills":        None,
-        "personality":   None,
-        "report_resume": summary,  # для save_interview_reports
     }
 
 
