@@ -74,12 +74,26 @@ async def languages_toggle(callback: CallbackQuery, state: FSMContext) -> None:
     )
 
 
-@router.callback_query(Form.waiting_languages, F.data == "lang_none")
-async def languages_none(callback: CallbackQuery, state: FSMContext) -> None:
+@router.callback_query(Form.waiting_languages, F.data == "lang_done")
+async def languages_done(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    await callback.answer()
     data = await state.get_data()
     lang = _lang(data)
-    msg = "Kamida bitta tilni tanlang" if lang == "uz" else "Выберите хотя бы один язык"
-    await callback.answer(msg, show_alert=True)
+    selected: list[str] = data.get("languages_selected", [])
+
+    # Защита от пустого выбора — нужно выбрать хотя бы один язык
+    if not selected:
+        msg = "Kamida bitta tilni tanlang" if lang == "uz" else "Выберите хотя бы один язык"
+        await callback.answer(msg, show_alert=True)
+        return
+
+    _LABELS_RU = {"ru": "Русский", "uz": "Узбекский", "en": "Английский", "tr": "Турецкий", "other": "Другой"}
+    _LABELS_UZ = {"ru": "Rus tili", "uz": "O'zbek tili", "en": "Ingliz tili", "tr": "Turk tili", "other": "Boshqa"}
+    labels = _LABELS_UZ if lang == "uz" else _LABELS_RU
+    readable = [labels.get(k, k) for k in selected]
+    await state.update_data(languages=", ".join(readable), languages_selected=selected)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await _ask_position_after_languages(callback.message, state, session, lang)
 
 
 @router.callback_query(Form.waiting_languages, F.data == "lang_skip")
@@ -88,21 +102,6 @@ async def languages_skip(callback: CallbackQuery, state: FSMContext, session: As
     data = await state.get_data()
     lang = _lang(data)
     await state.update_data(languages=None, languages_selected=[])
-    await callback.message.edit_reply_markup(reply_markup=None)
-    await _ask_position_after_languages(callback.message, state, session, lang)
-
-
-@router.callback_query(Form.waiting_languages, F.data == "lang_done")
-async def languages_done(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    await callback.answer()
-    data = await state.get_data()
-    lang = _lang(data)
-    selected: list[str] = data.get("languages_selected", [])
-    _LABELS_RU = {"ru": "Русский", "uz": "Узбекский", "en": "Английский", "tr": "Турецкий", "other": "Другой"}
-    _LABELS_UZ = {"ru": "Rus tili", "uz": "O'zbek tili", "en": "Ingliz tili", "tr": "Turk tili", "other": "Boshqa"}
-    labels = _LABELS_UZ if lang == "uz" else _LABELS_RU
-    readable = [labels.get(k, k) for k in selected]
-    await state.update_data(languages=", ".join(readable), languages_selected=selected)
     await callback.message.edit_reply_markup(reply_markup=None)
     await _ask_position_after_languages(callback.message, state, session, lang)
 
