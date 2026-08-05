@@ -6,13 +6,8 @@ import logging
 from datetime import datetime
 
 from aiogram import F, Router
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import (
-    InlineKeyboardButton, InlineKeyboardMarkup,
-    Message, CallbackQuery,
-    ReplyKeyboardRemove,
-)
+from aiogram.types import Message, ReplyKeyboardRemove
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.ai.agents import run_all_agents
@@ -20,6 +15,7 @@ from bot.ai.interview import get_next_step
 from bot.core.config import ADMIN_CHAT_ID
 from bot.db import requests as db
 from bot.filters.common import IsPrivateChat
+from bot import keyboards as kb
 from bot.states import Interview
 
 router = Router()
@@ -28,17 +24,14 @@ router.message.filter(IsPrivateChat())
 logger = logging.getLogger(__name__)
 MIN_QUESTIONS = 5
 
-_SKIP_KB_RU = InlineKeyboardMarkup(inline_keyboard=[[
-    InlineKeyboardButton(text="⏭ Пропустить вопрос",   callback_data="interview:skip"),
-    InlineKeyboardButton(text="🚫 Завершить интервью",  callback_data="interview:finish"),
-]])
-_SKIP_KB_UZ = InlineKeyboardMarkup(inline_keyboard=[[
-    InlineKeyboardButton(text="⏭ Savolni o'tkazish",   callback_data="interview:skip"),
-    InlineKeyboardButton(text="🚫 Intervyuni tugatish", callback_data="interview:finish"),
-]])
+# Тексты кнопок — используются для фильтрации входящих сообщений
+_SKIP_RU    = "⏭ Пропустить вопрос"
+_FINISH_RU  = "🚫 Завершить интервью"
+_SKIP_UZ    = "⏭ Savolni o'tkazish"
+_FINISH_UZ  = "🚫 Intervyuni tugatish"
 
-def _skip_kb(lang: str) -> InlineKeyboardMarkup:
-    return _SKIP_KB_UZ if lang == "uz" else _SKIP_KB_RU
+_SKIP_TEXTS   = {_SKIP_RU, _SKIP_UZ}
+_FINISH_TEXTS = {_FINISH_RU, _FINISH_UZ}
 
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -138,16 +131,78 @@ async def start_interview(
     )
 
     intro = (
-        "🤖 Recruiter AI \n\nОтлично! Теперь я задам вам несколько вопросов, чтобы лучше вас узнать.\n\n"
+        "🤖 <b>Recruiter AI</b>\n\nОтлично! Теперь я задам вам несколько вопросов, чтобы лучше вас узнать."
         if lang == "ru" else
-        "🤖 Recruiter AI \n\nJuda yaxshi! Endi men sizga bir necha savol beraman.\n\n"
+        "🤖 <b>Recruiter AI</b>\n\nJuda yaxshi! Endi men sizga bir necha savol beraman."
     )
 
-    # Сначала убираем reply-клавиатуру от шага подтверждения анкеты
+    # Убираем старую reply-клавиатуру (от шага подтверждения анкеты),
+    # затем сразу показываем клавиатуру интервью с вопросом
     await message.answer(intro, reply_markup=ReplyKeyboardRemove(), parse_mode="HTML")
-    # Затем отправляем первый вопрос с inline-кнопками
-    await message.answer(f"❓ {question}", parse_mode="HTML", reply_markup=_skip_kb(lang))
+    await message.answer(
+        f"❓ {question}",
+        reply_markup=kb.get_interview_keyboard(lang),
+        parse_mode="HTML",
+    )
 
+
+# ── Пропустить вопрос ─────────────────────────────────────────────────────────
+
+@router.message(Interview.answering, F.text.in_(_SKIP_TEXTS))
+async def skip_question(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    data            = await state.get_data()
+    session_id      = data.get("interview_session_id")
+    form_data       = data.get("interview_form_data", {})
+    lang            = data.get("interview_lang", "ru")
+    qa_log          = data.get("interview_qa_log", [])
+    current_q       = data.get("interview_current_q", "")
+    asked_questions = data.get("interview_asked_questions", [])
+
+    skip_text = "— (пропущен)" if lang == "ru" else "— (o'tkazildi)"
+    qa_log.append({"q": current_q, "a": skip_text})
+    await db.append_qa(session, session_id, qa_log)
+
+    step     = await get_next_step(form_data=form_data, qa_log=qa_log, lang=lang)
+    question = (step.get("question") or "").strip()
+    if len(qa_log) >= MIN_QUESTIONS and (step.get("done") or not question):
+        await _finish_interview(message, state, session, session_id, form_data, lang, qa_log)
+        return
+
+    if not question:
+        question = _fallback_question(lang, qa_log, asked_questions)
+    else:
+        normalized = question.casefold()
+        if normalized in asked_questions:
+            question = _fallback_question(lang, qa_log, asked_questions)
+        else:
+            asked_questions.append(normalized)
+
+    await db.update_interview_session(session, session_id, q_count=len(qa_log) + 1)
+    await state.update_data(
+        interview_qa_log=qa_log,
+        interview_current_q=question,
+        interview_asked_questions=asked_questions,
+    )
+    await message.answer(
+        f"🤖 {question}",
+        reply_markup=kb.get_interview_keyboard(lang),
+        parse_mode="HTML",
+    )
+
+
+# ── Завершить интервью досрочно ───────────────────────────────────────────────
+
+@router.message(Interview.answering, F.text.in_(_FINISH_TEXTS))
+async def force_finish(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    data       = await state.get_data()
+    session_id = data.get("interview_session_id")
+    form_data  = data.get("interview_form_data", {})
+    lang       = data.get("interview_lang", "ru")
+    qa_log     = data.get("interview_qa_log", [])
+    await _finish_interview(message, state, session, session_id, form_data, lang, qa_log)
+
+
+# ── Обычный ответ на вопрос ───────────────────────────────────────────────────
 
 @router.message(Interview.answering)
 async def process_answer(message: Message, state: FSMContext, session: AsyncSession) -> None:
@@ -167,44 +222,6 @@ async def process_answer(message: Message, state: FSMContext, session: AsyncSess
     if len(qa_log) >= MIN_QUESTIONS and (step.get("done") or not question):
         await _finish_interview(message, state, session, session_id, form_data, lang, qa_log)
         return
-    if not question:
-        question = _fallback_question(lang, qa_log, asked_questions)
-    else:
-        normalized = question.casefold()
-        if normalized in asked_questions:
-            question = _fallback_question(lang, qa_log, asked_questions)
-        else:
-            asked_questions.append(normalized)
-
-    await db.update_interview_session(session, session_id, q_count=len(qa_log) + 1)
-    await state.update_data(
-        interview_qa_log=qa_log,
-        interview_current_q=question,
-        interview_asked_questions=asked_questions,
-    )
-    await message.answer(f"🤖 {question}", parse_mode="HTML", reply_markup=_skip_kb(lang))
-
-
-@router.callback_query(Interview.answering, F.data == "interview:skip")
-async def skip_question(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    await callback.answer()
-    data            = await state.get_data()
-    session_id      = data.get("interview_session_id")
-    form_data       = data.get("interview_form_data", {})
-    lang            = data.get("interview_lang", "ru")
-    qa_log          = data.get("interview_qa_log", [])
-    current_q       = data.get("interview_current_q", "")
-    asked_questions = data.get("interview_asked_questions", [])
-
-    skip_text = "— (пропущен)" if lang == "ru" else "— (o'tkazildi)"
-    qa_log.append({"q": current_q, "a": skip_text})
-    await db.append_qa(session, session_id, qa_log)
-
-    step     = await get_next_step(form_data=form_data, qa_log=qa_log, lang=lang)
-    question = (step.get("question") or "").strip()
-    if len(qa_log) >= MIN_QUESTIONS and (step.get("done") or not question):
-        await _finish_interview(callback.message, state, session, session_id, form_data, lang, qa_log)
-        return
 
     if not question:
         question = _fallback_question(lang, qa_log, asked_questions)
@@ -221,19 +238,14 @@ async def skip_question(callback: CallbackQuery, state: FSMContext, session: Asy
         interview_current_q=question,
         interview_asked_questions=asked_questions,
     )
-    await callback.message.answer(f"🤖 {question}", parse_mode="HTML", reply_markup=_skip_kb(lang))
+    await message.answer(
+        f"🤖 {question}",
+        reply_markup=kb.get_interview_keyboard(lang),
+        parse_mode="HTML",
+    )
 
 
-@router.callback_query(Interview.answering, F.data == "interview:finish")
-async def force_finish(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    await callback.answer()
-    data       = await state.get_data()
-    session_id = data.get("interview_session_id")
-    form_data  = data.get("interview_form_data", {})
-    lang       = data.get("interview_lang", "ru")
-    qa_log     = data.get("interview_qa_log", [])
-    await _finish_interview(callback.message, state, session, session_id, form_data, lang, qa_log)
-
+# ── Завершение интервью ───────────────────────────────────────────────────────
 
 async def _finish_interview(
     message: Message,
@@ -251,11 +263,12 @@ async def _finish_interview(
     await state.clear()
 
     thanks = (
-        "✅ Интервью завершено! \n\nСпасибо за ответы. HR-менеджер свяжется с вами в ближайшее время."
+        "✅ <b>Интервью завершено!</b>\n\nСпасибо за ответы. HR-менеджер свяжется с вами в ближайшее время."
         if lang == "ru" else
-        "✅ Intervyu yakunlandi! \n\nJavoblaringiz uchun rahmat. HR-menejer tez orada siz bilan bog'lanadi."
+        "✅ <b>Intervyu yakunlandi!</b>\n\nJavoblaringiz uchun rahmat. HR-menejer tez orada siz bilan bog'lanadi."
     )
-    await message.answer(thanks, parse_mode="HTML")
+    # Возвращаем главное меню после завершения интервью
+    await message.answer(thanks, reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
 
     user_id = message.from_user.id if message.from_user else message.chat.id
     try:
