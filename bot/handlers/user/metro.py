@@ -42,8 +42,18 @@ async def ask_metro(message: Message, state: FSMContext, lang: str) -> None:
     """Отправляет сообщение с inline-клавиатурой линий метро.
 
     Вызывается из form.py после шага «телефон».
+    Сначала убирает reply-клавиатуру предыдущего шага (контакт/отмена),
+    чтобы она не висела поверх inline-кнопок выбора метро.
     """
     await state.set_state(Form.waiting_metro)
+
+    # Telegram не позволяет убрать reply-клавиатуру и показать inline в одном
+    # сообщении — отправляем техническое сообщение и сразу удаляем его.
+    with suppress(TelegramAPIError):
+        stub = await message.answer("🚇", reply_markup=kb.remove_keyboard())
+        with suppress(TelegramAPIError):
+            await stub.delete()
+
     with suppress(TelegramAPIError):
         await message.answer(
             _PROMPT.get(lang, _PROMPT["ru"]),
