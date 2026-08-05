@@ -35,7 +35,7 @@ BLOCKING_STATUSES = {"pending", "accepted", "hired", "hold"}
 # Все активные шаги анкеты (waiting_for_lang исключён — там своя логика)
 _FORM_ACTIVE_STATES = (
     Form.waiting_name, Form.waiting_birthday, Form.waiting_gender,
-    Form.waiting_phone, Form.waiting_address, Form.waiting_metro,
+    Form.waiting_phone, Form.waiting_metro,
     Form.waiting_citizenship, Form.waiting_languages,
     Form.waiting_position, Form.waiting_readiness, Form.waiting_experience,
     Form.waiting_exp_company, Form.waiting_exp_position, Form.waiting_exp_duration,
@@ -154,16 +154,6 @@ async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
         )
         return
     await state.update_data(phone=phone)
-    await message.answer(LOCALIZATION[lang]["ask_address"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
-    await state.set_state(Form.waiting_address)
-
-
-@router.message(Form.waiting_address)
-async def process_address(message: Message, state: FSMContext, lang: str) -> None:
-    if len((message.text or "").strip()) < 4:
-        await message.answer(LOCALIZATION[lang]["ask_address"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
-        return
-    await state.update_data(address=message.text)
     await message.answer(LOCALIZATION[lang]["ask_metro"], reply_markup=kb.get_metro_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_metro)
 
@@ -319,7 +309,7 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
     row_data = [
         now_str, data.get("branch"), data.get("position"), data.get("name"),
         data.get("birthday"), data.get("gender"), data.get("phone"),
-        data.get("address"), data.get("metro"), data.get("citizenship"),
+        data.get("metro"), data.get("citizenship"),
         ", ".join(data.get("languages") or []) or None,
         data.get("readiness"), data.get("experience", "—"),
         data.get("exp_company"), data.get("exp_position"),
