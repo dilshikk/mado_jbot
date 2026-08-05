@@ -3,9 +3,11 @@
 import asyncio
 import logging
 import re
+from contextlib import suppress
 from datetime import datetime
 
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
@@ -26,10 +28,10 @@ router.message.filter(IsPrivateChat())
 
 logger = logging.getLogger(__name__)
 
-MIN_VIDEO_DURATION    = 15
-VALID_BRANCH          = "Tashkent City Mall"
+MIN_VIDEO_DURATION = 15
+VALID_BRANCH       = "Tashkent City Mall"
 
-# Статусы, при которых повторная подача анкеты запрещена (защита от дублей)
+# Статусы, при которых повторная подача анкеты запрещена
 BLOCKING_STATUSES = {"pending", "accepted", "hired", "hold"}
 
 # Все активные шаги анкеты (waiting_for_lang исключён — там своя логика)
@@ -64,99 +66,188 @@ async def cancel_form(message: Message, state: FSMContext, lang: str) -> None:
     """Отмена анкеты на любом шаге — кнопкой или командой /cancel."""
     await state.clear()
     await state.update_data(lang=lang)
-    await message.answer(LOCALIZATION[lang]["anketa_cancelled"], reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
+    with suppress(TelegramAPIError):
+        await message.answer(
+            LOCALIZATION[lang]["anketa_cancelled"],
+            reply_markup=kb.get_main_menu(lang),
+            parse_mode="HTML",
+        )
 
 
 @router.message(F.text.in_(["📝 Заполнить анкету", "📝 Anketani to'ldirish"]))
 async def start_anketa(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
     if await db.is_user_blocked(session, message.from_user.id):
-        await message.answer(LOCALIZATION[lang]["user_blocked_text"], parse_mode="HTML")
+        with suppress(TelegramAPIError):
+            await message.answer(LOCALIZATION[lang]["user_blocked_text"], parse_mode="HTML")
         return
 
     vacancies = await db.get_active_vacancies(session)
     if not vacancies:
-        await message.answer(
-            "⏳ <b>В данный момент открытых вакансий нет.</b>\n\nСледите за обновлениями!"
-            if lang == "ru" else
-            "⏳ <b>Hozirda ochiq vakansiyalar yo'q.</b>\n\nYangilanishlarni kuzatib boring!",
-            parse_mode="HTML",
-        )
+        with suppress(TelegramAPIError):
+            await message.answer(
+                "⏳ <b>В данный момент открытых вакансий нет.</b>\n\nСледите за обновлениями!"
+                if lang == "ru" else
+                "⏳ <b>Hozirda ochiq vakansiyalar yo'q.</b>\n\nYangilanishlarni kuzatib boring!",
+                parse_mode="HTML",
+            )
         return
 
-    # Защита от дублей: активная заявка любого типа блокирует новую подачу
-    # Для администраторов проверка пропускается — они могут тестировать анкету
     is_admin = message.from_user.id in ADMIN_IDS
     if not is_admin:
         status = await db.get_application_status(session, message.from_user.id)
         if status in BLOCKING_STATUSES:
             key = f"anketa_block_{status}"
             text = LOCALIZATION[lang].get(key) or LOCALIZATION[lang]["anketa_block_pending"]
-            await message.answer(text, parse_mode="HTML")
+            with suppress(TelegramAPIError):
+                await message.answer(text, parse_mode="HTML")
             return
 
-    # ── Раздел «Личные данные»: ФИО первым шагом ──
     await state.update_data(branch=VALID_BRANCH)
-    await message.answer(LOCALIZATION[lang]["ask_name"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
+    with suppress(TelegramAPIError):
+        await message.answer(
+            LOCALIZATION[lang]["ask_name"],
+            reply_markup=kb.get_cancel_keyboard(lang),
+            parse_mode="HTML",
+        )
     await state.set_state(Form.waiting_name)
 
+
+# ── ФИО ──────────────────────────────────────────────────────────────────────
 
 @router.message(Form.waiting_name)
 async def process_name(message: Message, state: FSMContext, lang: str) -> None:
     text = (message.text or "").strip()
     if len(text) < 3 or any(ch.isdigit() for ch in text):
-        await message.answer(LOCALIZATION[lang].get("bad_name", "Введите корректное ФИО."), parse_mode="HTML")
+        logger.debug("process_name: validation failed user_id=%d input=%r", message.from_user.id, text)
+        with suppress(TelegramAPIError):
+            await message.answer(
+                LOCALIZATION[lang].get("bad_name", "❌ Введите корректное ФИО."),
+                parse_mode="HTML",
+            )
+        with suppress(TelegramAPIError):
+            await message.answer(
+                LOCALIZATION[lang]["ask_name"],
+                reply_markup=kb.get_cancel_keyboard(lang),
+                parse_mode="HTML",
+            )
         return
     await state.update_data(name=text)
-    await message.answer(LOCALIZATION[lang]["ask_birthday"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
+    logger.info("process_name: user_id=%d name=%r", message.from_user.id, text)
+    with suppress(TelegramAPIError):
+        await message.answer(
+            LOCALIZATION[lang]["ask_birthday"],
+            reply_markup=kb.get_cancel_keyboard(lang),
+            parse_mode="HTML",
+        )
     await state.set_state(Form.waiting_birthday)
 
+
+# ── Дата рождения ─────────────────────────────────────────────────────────────
 
 @router.message(Form.waiting_birthday)
 async def process_birthday(message: Message, state: FSMContext, lang: str) -> None:
     text = (message.text or "").strip()
     if not re.match(r"^\d{2}\.\d{2}\.\d{4}$", text):
-        await message.answer(LOCALIZATION[lang]["bad_birthday"], parse_mode="HTML")
+        logger.debug("process_birthday: bad format user_id=%d input=%r", message.from_user.id, text)
+        with suppress(TelegramAPIError):
+            await message.answer(LOCALIZATION[lang]["bad_birthday"], parse_mode="HTML")
+        with suppress(TelegramAPIError):
+            await message.answer(
+                LOCALIZATION[lang]["ask_birthday"],
+                reply_markup=kb.get_cancel_keyboard(lang),
+                parse_mode="HTML",
+            )
         return
     try:
         birth_date = datetime.strptime(text, "%d.%m.%Y")
         age = (datetime.now() - birth_date).days // 365
     except ValueError:
-        await message.answer(LOCALIZATION[lang]["bad_birthday"], parse_mode="HTML")
+        logger.debug("process_birthday: strptime failed user_id=%d input=%r", message.from_user.id, text)
+        with suppress(TelegramAPIError):
+            await message.answer(LOCALIZATION[lang]["bad_birthday"], parse_mode="HTML")
+        with suppress(TelegramAPIError):
+            await message.answer(
+                LOCALIZATION[lang]["ask_birthday"],
+                reply_markup=kb.get_cancel_keyboard(lang),
+                parse_mode="HTML",
+            )
         return
     if not (18 <= age <= 60):
-        await message.answer(
-            "Возраст должен быть от <b>18 до 60 лет</b>." if lang == "ru" else "Yosh <b>18 dan 60 yoshgacha</b> bo'lishi kerak.",
-            parse_mode="HTML",
-        )
+        logger.debug("process_birthday: age out of range user_id=%d age=%d", message.from_user.id, age)
+        with suppress(TelegramAPIError):
+            await message.answer(LOCALIZATION[lang]["bad_age"], parse_mode="HTML")
+        with suppress(TelegramAPIError):
+            await message.answer(
+                LOCALIZATION[lang]["ask_birthday"],
+                reply_markup=kb.get_cancel_keyboard(lang),
+                parse_mode="HTML",
+            )
         return
     await state.update_data(birthday=text)
-    await message.answer(LOCALIZATION[lang]["ask_gender"], reply_markup=kb.get_gender_keyboard(lang), parse_mode="HTML")
+    logger.info("process_birthday: user_id=%d birthday=%r age=%d", message.from_user.id, text, age)
+    with suppress(TelegramAPIError):
+        await message.answer(
+            LOCALIZATION[lang]["ask_gender"],
+            reply_markup=kb.get_gender_keyboard(lang),
+            parse_mode="HTML",
+        )
     await state.set_state(Form.waiting_gender)
 
+
+# ── Пол ───────────────────────────────────────────────────────────────────────
 
 @router.message(Form.waiting_gender)
 async def process_gender(message: Message, state: FSMContext, lang: str) -> None:
     if message.text not in {LOCALIZATION[lang]["gender_male"], LOCALIZATION[lang]["gender_female"]}:
-        await message.answer(LOCALIZATION[lang]["ask_gender"], reply_markup=kb.get_gender_keyboard(lang), parse_mode="HTML")
+        logger.debug("process_gender: invalid input user_id=%d input=%r", message.from_user.id, message.text)
+        with suppress(TelegramAPIError):
+            await message.answer(LOCALIZATION[lang]["bad_gender"], parse_mode="HTML")
+        with suppress(TelegramAPIError):
+            await message.answer(
+                LOCALIZATION[lang]["ask_gender"],
+                reply_markup=kb.get_gender_keyboard(lang),
+                parse_mode="HTML",
+            )
         return
     await state.update_data(gender=message.text)
-    await message.answer(LOCALIZATION[lang]["ask_phone"], reply_markup=kb.get_phone_keyboard(lang), parse_mode="HTML")
+    logger.info("process_gender: user_id=%d gender=%r", message.from_user.id, message.text)
+    with suppress(TelegramAPIError):
+        await message.answer(
+            LOCALIZATION[lang]["ask_phone"],
+            reply_markup=kb.get_phone_keyboard(lang),
+            parse_mode="HTML",
+        )
     await state.set_state(Form.waiting_phone)
 
+
+# ── Телефон ───────────────────────────────────────────────────────────────────
 
 @router.message(Form.waiting_phone)
 async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
     phone = message.contact.phone_number if message.contact else (message.text or "").strip()
     if not message.contact and not re.match(r"^\+?\d{7,15}$", phone):
-        await message.answer(
-            "Введите корректный номер: <code>+998901234567</code>" if lang == "ru" else "To'g'ri raqam kiriting: <code>+998901234567</code>",
-            parse_mode="HTML",
-        )
+        logger.debug("process_phone: invalid phone user_id=%d input=%r", message.from_user.id, phone)
+        with suppress(TelegramAPIError):
+            await message.answer(LOCALIZATION[lang]["bad_phone"], parse_mode="HTML")
+        with suppress(TelegramAPIError):
+            await message.answer(
+                LOCALIZATION[lang]["ask_phone"],
+                reply_markup=kb.get_phone_keyboard(lang),
+                parse_mode="HTML",
+            )
         return
     await state.update_data(phone=phone)
-    await message.answer(LOCALIZATION[lang]["ask_metro"], reply_markup=kb.get_metro_keyboard(lang), parse_mode="HTML")
+    logger.info("process_phone: user_id=%d phone=%r", message.from_user.id, phone)
+    with suppress(TelegramAPIError):
+        await message.answer(
+            LOCALIZATION[lang]["ask_metro"],
+            reply_markup=kb.get_metro_keyboard(lang),
+            parse_mode="HTML",
+        )
     await state.set_state(Form.waiting_metro)
 
+
+# ── Метро ─────────────────────────────────────────────────────────────────────
 
 @router.message(Form.waiting_metro)
 async def process_metro(message: Message, state: FSMContext, lang: str) -> None:
@@ -169,14 +260,28 @@ async def process_metro(message: Message, state: FSMContext, lang: str) -> None:
         if button.text != LOCALIZATION[lang]["btn_cancel"]
     }
     if text not in valid_values:
-        await message.answer(LOCALIZATION[lang]["ask_metro"], reply_markup=kb.get_metro_keyboard(lang), parse_mode="HTML")
+        logger.debug("process_metro: invalid input user_id=%d input=%r", message.from_user.id, text)
+        with suppress(TelegramAPIError):
+            await message.answer(LOCALIZATION[lang]["bad_metro"], parse_mode="HTML")
+        with suppress(TelegramAPIError):
+            await message.answer(
+                LOCALIZATION[lang]["ask_metro"],
+                reply_markup=kb.get_metro_keyboard(lang),
+                parse_mode="HTML",
+            )
         return
     await state.update_data(metro=None if text == skip_value else text)
-    await message.answer(LOCALIZATION[lang]["ask_languages"], reply_markup=kb.get_languages_keyboard(lang), parse_mode="HTML")
+    logger.info("process_metro: user_id=%d metro=%r", message.from_user.id, text)
+    with suppress(TelegramAPIError):
+        await message.answer(
+            LOCALIZATION[lang]["ask_languages"],
+            reply_markup=kb.get_languages_keyboard(lang),
+            parse_mode="HTML",
+        )
     await state.set_state(Form.waiting_languages)
 
 
-# ── Раздел «Информация о работе»: должность → готовность → опыт → ... ──
+# ── Желаемая должность ────────────────────────────────────────────────────────
 
 @router.message(Form.waiting_position)
 async def process_position(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
@@ -184,44 +289,88 @@ async def process_position(message: Message, state: FSMContext, lang: str, sessi
     valid     = _valid_position_labels(vacancies)
     chosen    = (message.text or "").strip()
     if chosen not in valid:
-        await message.answer(
-            LOCALIZATION[lang]["ask_position"],
-            reply_markup=kb.get_positions_keyboard(lang, vacancies),
-            parse_mode="HTML",
-        )
+        logger.debug("process_position: invalid input user_id=%d input=%r", message.from_user.id, chosen)
+        with suppress(TelegramAPIError):
+            await message.answer(LOCALIZATION[lang]["bad_position"], parse_mode="HTML")
+        with suppress(TelegramAPIError):
+            await message.answer(
+                LOCALIZATION[lang]["ask_position"],
+                reply_markup=kb.get_positions_keyboard(lang, vacancies),
+                parse_mode="HTML",
+            )
         return
     await state.update_data(position=chosen)
-    await message.answer(LOCALIZATION[lang]["ask_readiness"], reply_markup=kb.get_readiness_keyboard(lang), parse_mode="HTML")
+    logger.info("process_position: user_id=%d position=%r", message.from_user.id, chosen)
+    with suppress(TelegramAPIError):
+        await message.answer(
+            LOCALIZATION[lang]["ask_readiness"],
+            reply_markup=kb.get_readiness_keyboard(lang),
+            parse_mode="HTML",
+        )
     await state.set_state(Form.waiting_readiness)
 
 
+# ── Видео-визитка ─────────────────────────────────────────────────────────────
+
 @router.message(Form.waiting_video)
 async def process_video(message: Message, state: FSMContext, lang: str) -> None:
-    if message.text == LOCALIZATION[lang]["btn_skip"]:
+    btn_skip = LOCALIZATION[lang].get("btn_skip", "⏭ Пропустить")
+    if message.text == btn_skip:
         await state.update_data(video_file_id=None, is_video_note=False, video_duration=0)
+        logger.info("process_video: user_id=%d skipped", message.from_user.id)
     elif message.video_note:
         duration, file_id, is_note = message.video_note.duration, message.video_note.file_id, True
     elif message.video:
         duration, file_id, is_note = message.video.duration, message.video.file_id, False
     else:
-        await message.answer(LOCALIZATION[lang]["ask_video"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
+        logger.debug("process_video: invalid content user_id=%d", message.from_user.id)
+        with suppress(TelegramAPIError):
+            await message.answer(
+                LOCALIZATION[lang].get("bad_video", "❌ Отправьте видео или нажмите «⏭ Пропустить»."),
+                parse_mode="HTML",
+            )
+        with suppress(TelegramAPIError):
+            await message.answer(
+                LOCALIZATION[lang]["ask_video"],
+                reply_markup=kb.get_cancel_keyboard(lang),
+                parse_mode="HTML",
+            )
         return
     if message.video_note or message.video:
         if duration < MIN_VIDEO_DURATION:
-            await message.answer(
-                f"Видео слишком короткое ({duration} сек). Нужно <b>≥{MIN_VIDEO_DURATION} сек</b>."
-                if lang == "ru" else
-                f"Video qisqa ({duration}s). <b>≥{MIN_VIDEO_DURATION}s</b> kerak.",
-                parse_mode="HTML",
+            logger.debug(
+                "process_video: too short user_id=%d duration=%d min=%d",
+                message.from_user.id, duration, MIN_VIDEO_DURATION,
             )
+            tpl = LOCALIZATION[lang].get("bad_video_short", "")
+            error_text = tpl.format(duration=duration, min_duration=MIN_VIDEO_DURATION) if tpl else (
+                f"❌ Видео слишком короткое ({duration} сек). Нужно <b>≥{MIN_VIDEO_DURATION} сек</b>."
+                if lang == "ru" else
+                f"❌ Video qisqa ({duration}s). <b>≥{MIN_VIDEO_DURATION}s</b> kerak."
+            )
+            with suppress(TelegramAPIError):
+                await message.answer(error_text, parse_mode="HTML")
+            with suppress(TelegramAPIError):
+                await message.answer(
+                    LOCALIZATION[lang]["ask_video"],
+                    reply_markup=kb.get_cancel_keyboard(lang),
+                    parse_mode="HTML",
+                )
             return
         await state.update_data(video_file_id=file_id, is_video_note=is_note, video_duration=duration)
+        logger.info(
+            "process_video: user_id=%d duration=%d is_note=%s",
+            message.from_user.id, duration, is_note,
+        )
     # ── Итоговая сводка анкеты → подтверждение ──
     data    = await state.get_data()
     summary = build_resume_text(data, lang)
-    await message.answer(summary, reply_markup=kb.get_confirmation_keyboard(lang), parse_mode="HTML")
+    with suppress(TelegramAPIError):
+        await message.answer(summary, reply_markup=kb.get_confirmation_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_confirmation)
 
+
+# ── Подтверждение анкеты ──────────────────────────────────────────────────────
 
 @router.message(Form.waiting_confirmation)
 async def process_confirmation(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
@@ -243,7 +392,12 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
     if not is_admin:
         status = await db.get_application_status(session, user.id)
         if status in BLOCKING_STATUSES:
-            await message.answer(LOCALIZATION[lang]["anketa_already_exists"], reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
+            with suppress(TelegramAPIError):
+                await message.answer(
+                    LOCALIZATION[lang]["anketa_already_exists"],
+                    reply_markup=kb.get_main_menu(lang),
+                    parse_mode="HTML",
+                )
             await state.clear()
             await state.update_data(lang=lang)
             return
@@ -261,12 +415,20 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
         position=data.get("position"),
         experience=data.get("experience", "—"),
     )
+    logger.info(
+        "process_confirmation: application saved user_id=%d position=%r",
+        user.id, data.get("position"),
+    )
 
     resume_text = build_hr_resume_text(data, user.id, username_raw)
-    hr_keyboard = kb.get_hr_action_keyboard(phone=data.get("phone"), username=username_raw, candidate_id=user.id)
-    hr_msg = await bot.send_message(chat_id=ADMIN_CHAT_ID, text=resume_text, reply_markup=hr_keyboard, parse_mode="HTML")
+    hr_keyboard = kb.get_hr_action_keyboard(
+        phone=data.get("phone"), username=username_raw, candidate_id=user.id,
+    )
+    hr_msg = await bot.send_message(
+        chat_id=ADMIN_CHAT_ID, text=resume_text, reply_markup=hr_keyboard, parse_mode="HTML",
+    )
 
-    # AI-скрининг анкеты (первичный, до интервью)
+    # AI-скрининг анкеты
     ai_summary = await screen_application(data)
     if ai_summary:
         try:
@@ -313,8 +475,11 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
         logger.error("Ошибка Google Sheets: %s", e, exc_info=True)
         error_text = (
             f"⚠️ <b>Google Sheets: ошибка записи!</b>\n\n"
-            f"👤 Кандидат: <b>{data.get('name')}</b>\n📱 <code>{data.get('phone')}</code>\n💼 {data.get('position')}\n\n"
-            f"<i>Данные в БД сохранены.</i>\n🔴 Ошибка: <code>{e}</code>"
+            f"👤 Кандидат: <b>{data.get('name')}</b>\n"
+            f"📱 <code>{data.get('phone')}</code>\n"
+            f"💼 {data.get('position')}\n\n"
+            f"<i>Данные в БД сохранены.</i>\n"
+            f"🔴 Ошибка: <code>{e}</code>"
         )
         for admin_id in ADMIN_IDS:
             try:
@@ -322,14 +487,16 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
             except Exception as notify_err:
                 logger.error("Не удалось уведомить admin_id=%d: %s", admin_id, notify_err)
 
-    # Подтверждение кандидату
-    await message.answer(LOCALIZATION[lang]["anketa_done"], reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
+    with suppress(TelegramAPIError):
+        await message.answer(
+            LOCALIZATION[lang]["anketa_done"],
+            reply_markup=kb.get_main_menu(lang),
+            parse_mode="HTML",
+        )
 
     # ── Запуск AI-интервью ────────────────────────────────────────────────────
-    # Импорт здесь чтобы избежать циклических зависимостей
     from bot.handlers.user.interview import start_interview  # noqa: PLC0415
 
-    # Сохраняем form_data для интервью до очистки состояния
     form_data_for_interview = dict(data)
 
     await state.clear()
