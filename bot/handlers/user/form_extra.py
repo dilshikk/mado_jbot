@@ -4,7 +4,7 @@
 - Языки владения (inline multiselect — CallbackQuery)
 - Готовность к работе
 - Ветвление Да/Нет для опыта работы (4 под-шага)
-- Зарплатные ожидания
+- Зарплатные ожидания (числовая валидация, кнопка Пропустить)
 - График работы
 - Вечерние смены
 - Выходные и праздники
@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
@@ -39,6 +40,13 @@ def _t(lang: str, key: str, fallback: str = "") -> str:
 
 def _skip_text(lang: str) -> str:
     return _t(lang, "btn_skip", "⏭ Пропустить")
+
+# Паттерн для зарплатного ввода: только цифры, пробелы, дефис, тире, запятые
+_SALARY_RE = re.compile(r"^[\d\s.,\-–—]+$")
+
+def _is_valid_salary(text: str) -> bool:
+    """Проверяет что ввод содержит хотя бы одно число и только допустимые символы."""
+    return bool(_SALARY_RE.match(text)) and any(c.isdigit() for c in text)
 
 
 # ─── 1. Языки владения (inline multiselect) ───────────────────────────────────
@@ -70,13 +78,12 @@ async def languages_toggle(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.callback_query(Form.waiting_languages, F.data == "lang_none")
-async def languages_none(callback: CallbackQuery) -> None:
+async def languages_none(callback: CallbackQuery, state: FSMContext) -> None:
     """Нажали «Готово» без выбора — подсказка."""
-    await callback.answer(
-        "Выберите хотя бы один язык" if callback.message and "Выберите" in (callback.message.text or "")
-        else "Selezioa almeno una lingua",
-        show_alert=True,
-    )
+    data = await state.get_data()
+    lang = _lang(data)
+    msg = "Selezioa almeno una lingua" if lang == "uz" else "Выберите хотя бы один язык"
+    await callback.answer(msg, show_alert=True)
 
 
 @router.callback_query(Form.waiting_languages, F.data == "lang_skip")
@@ -98,7 +105,6 @@ async def languages_done(callback: CallbackQuery, state: FSMContext, session: As
     lang = _lang(data)
     selected: list[str] = data.get("languages_selected", [])
 
-    # Переводим ключи → читаемые названия для хранения
     _LABELS_RU = {"ru": "Русский", "uz": "Узбекский", "en": "Английский", "tr": "Турецкий", "other": "Другой"}
     _LABELS_UZ = {"ru": "Rus tili", "uz": "O'zbek tili", "en": "Ingliz tili", "tr": "Turk tili", "other": "Boshqa"}
     labels = _LABELS_UZ if lang == "uz" else _LABELS_RU
@@ -109,7 +115,6 @@ async def languages_done(callback: CallbackQuery, state: FSMContext, session: As
     await _ask_position_after_languages(callback.message, state, session, lang)
 
 
-# Вызывается из form.py после шага метро
 async def ask_languages(message: Message, state: FSMContext, lang: str) -> None:
     """Отправляет вопрос о языках с inline-клавиатурой."""
     await state.update_data(languages_selected=[])
@@ -123,7 +128,6 @@ async def ask_languages(message: Message, state: FSMContext, lang: str) -> None:
 async def _ask_position_after_languages(
     message: Message, state: FSMContext, session: AsyncSession, lang: str,
 ) -> None:
-    """Раздел «Информация о работе»: первый шаг — выбор должности."""
     vacancies = await db.get_active_vacancies(session)
     await state.set_state(Form.waiting_position)
     await message.answer(
@@ -192,7 +196,7 @@ async def handle_exp_company(message: Message, state: FSMContext) -> None:
     lang = _lang(data)
     await state.update_data(exp_company=(message.text or "").strip() or None)
     await state.set_state(Form.waiting_exp_position)
-    await message.answer(_t(lang, "ask_exp_position"), reply_markup=kb.get_cancel_keyboard(lang))
+    await message.answer(_t(lang, "ask_exp_position"), reply_markup=kb.get_skip_cancel_keyboard(lang))
     logger.info("handle_exp_company: user_id=%d company=%r", message.from_user.id, message.text)
 
 
@@ -203,7 +207,7 @@ async def handle_exp_position(message: Message, state: FSMContext) -> None:
     text = (message.text or "").strip()
     await state.update_data(exp_position=None if text == _skip_text(lang) else text or None)
     await state.set_state(Form.waiting_exp_duration)
-    await message.answer(_t(lang, "ask_exp_duration"), reply_markup=kb.get_cancel_keyboard(lang))
+    await message.answer(_t(lang, "ask_exp_duration"), reply_markup=kb.get_skip_cancel_keyboard(lang))
     logger.info("handle_exp_position: user_id=%d position=%r", message.from_user.id, text or None)
 
 
@@ -214,7 +218,7 @@ async def handle_exp_duration(message: Message, state: FSMContext) -> None:
     text = (message.text or "").strip()
     await state.update_data(exp_duration=None if text == _skip_text(lang) else text or None)
     await state.set_state(Form.waiting_exp_duties)
-    await message.answer(_t(lang, "ask_exp_duties"), reply_markup=kb.get_cancel_keyboard(lang))
+    await message.answer(_t(lang, "ask_exp_duties"), reply_markup=kb.get_skip_cancel_keyboard(lang))
     logger.info("handle_exp_duration: user_id=%d duration=%r", message.from_user.id, text or None)
 
 
@@ -234,7 +238,7 @@ async def _ask_salary(message: Message, state: FSMContext, lang: str) -> None:
     await state.set_state(Form.waiting_salary)
     await message.answer(
         _t(lang, "ask_salary"),
-        reply_markup=kb.get_cancel_keyboard(lang),
+        reply_markup=kb.get_skip_cancel_keyboard(lang),  # кнопка Пропустить
         parse_mode="HTML",
     )
 
@@ -244,10 +248,33 @@ async def handle_salary(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     lang = _lang(data)
     text = (message.text or "").strip()
-    await state.update_data(salary=None if text == _skip_text(lang) else text or None)
+
+    # Пропустить
+    if text == _skip_text(lang):
+        await state.update_data(salary=None)
+        await _ask_schedule(message, state, lang)
+        return
+
+    # Валидация: принимаем только числа/диапазоны (не произвольный текст)
+    if not _is_valid_salary(text):
+        err = (
+            "❌ Укажите сумму цифрами, например: <b>3 000 000</b> или <b>3 000 000 – 5 000 000</b>\n"
+            "Или нажмите «⏭ Пропустить»."
+            if lang == "ru" else
+            "❌ Miqdorni raqamlar bilan yozing, masalan: <b>3 000 000</b> yoki <b>3 000 000 – 5 000 000</b>\n"
+            "Yoki «⏭ O'tkazib yuborish» tugmasini bosing."
+        )
+        await message.answer(err, reply_markup=kb.get_skip_cancel_keyboard(lang), parse_mode="HTML")
+        return
+
+    await state.update_data(salary=text)
+    await _ask_schedule(message, state, lang)
+    logger.info("handle_salary: user_id=%d salary=%r", message.from_user.id, text)
+
+
+async def _ask_schedule(message: Message, state: FSMContext, lang: str) -> None:
     await state.set_state(Form.waiting_schedule)
     await message.answer(_t(lang, "ask_schedule"), reply_markup=kb.get_schedule_keyboard(lang))
-    logger.info("handle_salary: user_id=%d salary=%r", message.from_user.id, text or None)
 
 
 # ─── 6. График работы ─────────────────────────────────────────────────────────
