@@ -231,7 +231,8 @@ def migrate(sqlite_path: str, pg_dsn: str) -> None:
              for r in rows],
         )
     existing_names = {r["name_ru"] for r in rows}
-    seed = [(n_ru, n_uz, em, order, now)
+    # Кортеж: (name_ru, name_uz, emoji, sort_order, is_active, created_at)
+    seed = [(n_ru, n_uz, em, order, 1, now)
             for n_ru, n_uz, em, order in DEFAULT_VACANCIES
             if n_ru not in existing_names]
     if seed:
