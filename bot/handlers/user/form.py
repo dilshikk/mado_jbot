@@ -28,8 +28,6 @@ logger = logging.getLogger(__name__)
 
 MIN_VIDEO_DURATION    = 15
 VALID_BRANCH          = "Tashkent City Mall"
-EXPERIENCE_OPTIONS_RU = {"Нет опыта", "Менее 1 года", "1–2 года", "3–5 лет", "5+ лет"}
-EXPERIENCE_OPTIONS_UZ = {"Tajriba yo'q", "1 yildan kam", "1–2 yil", "3–5 yil", "5+ yil"}
 
 # Статусы, при которых повторная подача анкеты запрещена (защита от дублей)
 BLOCKING_STATUSES = {"pending", "accepted", "hired", "hold"}
@@ -39,7 +37,11 @@ _FORM_ACTIVE_STATES = (
     Form.waiting_branch, Form.waiting_position, Form.waiting_name,
     Form.waiting_birthday, Form.waiting_gender, Form.waiting_family,
     Form.waiting_citizenship, Form.waiting_address, Form.waiting_experience,
-    Form.waiting_phone, Form.waiting_video, Form.waiting_confirmation,
+    Form.waiting_exp_company, Form.waiting_exp_position, Form.waiting_exp_duration,
+    Form.waiting_exp_duties, Form.waiting_readiness, Form.waiting_salary,
+    Form.waiting_schedule, Form.waiting_evening_shifts, Form.waiting_weekends,
+    Form.waiting_smoking, Form.waiting_med_book, Form.waiting_languages,
+    Form.waiting_photo, Form.waiting_phone, Form.waiting_video, Form.waiting_confirmation,
 )
 
 
@@ -198,23 +200,11 @@ async def process_address(message: Message, state: FSMContext, lang: str) -> Non
         return
     await state.update_data(address=message.text)
     await message.answer(
-        "Есть ли у вас опыт работы в ресторанном бизнесе?" if lang == "ru" else "Restoran biznesida ish tajribangiz bormi?",
-        reply_markup=kb.get_experience_keyboard(lang), parse_mode="HTML",
+        LOCALIZATION[lang]["ask_experience_yn"],
+        reply_markup=kb.get_experience_yn_keyboard(lang),
+        parse_mode="HTML",
     )
     await state.set_state(Form.waiting_experience)
-
-
-@router.message(Form.waiting_experience)
-async def process_experience(message: Message, state: FSMContext, lang: str) -> None:
-    if (message.text or "").strip() not in (EXPERIENCE_OPTIONS_RU | EXPERIENCE_OPTIONS_UZ):
-        await message.answer(
-            "Есть ли у вас опыт работы в ресторанном бизнесе?" if lang == "ru" else "Restoran biznesida ish tajribangiz bormi?",
-            reply_markup=kb.get_experience_keyboard(lang), parse_mode="HTML",
-        )
-        return
-    await state.update_data(experience=message.text)
-    await message.answer(LOCALIZATION[lang]["ask_phone"], reply_markup=kb.get_phone_keyboard(lang), parse_mode="HTML")
-    await state.set_state(Form.waiting_phone)
 
 
 @router.message(Form.waiting_phone)
@@ -227,36 +217,32 @@ async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
         )
         return
     await state.update_data(phone=phone)
-    ask_video = (
-        "Отправьте <b>видео-визитку</b> (кружок или видео).\n⚠️ Минимум — <b>15 секунд</b>."
-        if lang == "ru" else
-        "<b>Video-vizitka</b> yuboring (dumaloq yoki video).\n⚠️ Minimal — <b>15 soniya</b>."
-    )
+    ask_video = LOCALIZATION[lang]["ask_video"]
     await message.answer(ask_video, reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_video)
 
 
 @router.message(Form.waiting_video)
 async def process_video(message: Message, state: FSMContext, lang: str) -> None:
-    if message.video_note:
+    if message.text == LOCALIZATION[lang]["btn_skip"]:
+        await state.update_data(video_file_id=None, is_video_note=False, video_duration=0)
+    elif message.video_note:
         duration, file_id, is_note = message.video_note.duration, message.video_note.file_id, True
     elif message.video:
         duration, file_id, is_note = message.video.duration, message.video.file_id, False
     else:
-        await message.answer(
-            "Отправьте <b>видео-сообщение</b> или кружок." if lang == "ru" else "<b>Video-xabar</b> yoki dumaloq video yuboring.",
-            parse_mode="HTML",
-        )
+        await message.answer(LOCALIZATION[lang]["ask_video"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
         return
-    if duration < MIN_VIDEO_DURATION:
-        await message.answer(
-            f"Видео слишком короткое ({duration} сек). Нужно <b>≥{MIN_VIDEO_DURATION} сек</b>."
-            if lang == "ru" else
-            f"Video qisqa ({duration}s). <b>≥{MIN_VIDEO_DURATION}s</b> kerak.",
-            parse_mode="HTML",
-        )
-        return
-    await state.update_data(video_file_id=file_id, is_video_note=is_note, video_duration=duration)
+    if message.video_note or message.video:
+        if duration < MIN_VIDEO_DURATION:
+            await message.answer(
+                f"Видео слишком короткое ({duration} сек). Нужно <b>≥{MIN_VIDEO_DURATION} сек</b>."
+                if lang == "ru" else
+                f"Video qisqa ({duration}s). <b>≥{MIN_VIDEO_DURATION}s</b> kerak.",
+                parse_mode="HTML",
+            )
+            return
+        await state.update_data(video_file_id=file_id, is_video_note=is_note, video_duration=duration)
     data    = await state.get_data()
     summary = build_resume_text(data, lang)
     await message.answer(summary, reply_markup=kb.get_confirmation_keyboard(lang), parse_mode="HTML")

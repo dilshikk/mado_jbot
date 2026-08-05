@@ -288,16 +288,15 @@ async def handle_languages_toggle(callback: CallbackQuery, state: FSMContext) ->
         await callback.message.edit_reply_markup(
             reply_markup=kb.get_languages_keyboard(lang, selected_set)
         )
-    except Exception:
-        pass  # сообщение не изменилось — игнорируем
+    except Exception as exc:
+        logger.warning("Не удалось обновить выбор языков: %s", exc)
     await callback.answer()
 
 
 # ─── 11. Фото кандидата ───────────────────────────────────────────────────────
 
 async def _ask_phone(message: Message, state: FSMContext, lang: str) -> None:
-    """Переход к вводу телефона (photo → phone цепочка не нужна здесь,
-    photo вставляется между languages и phone)."""
+    """Запрашивает необязательное фото перед номером телефона."""
     await state.set_state(Form.waiting_photo)
     await message.answer(
         _t(lang, "ask_photo"),

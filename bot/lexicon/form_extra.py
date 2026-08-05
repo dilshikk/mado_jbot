@@ -71,6 +71,7 @@ EXTRA_RU = {
 
     # Фото
     "ask_photo": "📸 Отправьте ваше <b>фото</b>\n(или нажмите «⏭ Пропустить»)",
+    "ask_video": "🎥 Отправьте <b>видео-визитку</b> (кружок или видео).\n⚠️ Минимум — <b>15 секунд</b>.\n(или нажмите «⏭ Пропустить»)",
 }
 
 EXTRA_UZ = {
@@ -143,4 +144,5 @@ EXTRA_UZ = {
 
     # Фото
     "ask_photo": "📸 Rasmingizni yuboring\n(yoki «⏭ O'tkazib yuborish» tugmasini bosing)",
+    "ask_video": "<b>Video-vizitka</b> yuboring (dumaloq yoki video).\n⚠️ Minimal — <b>15 soniya</b>.\n(yoki «⏭ O'tkazib yuborish» tugmasini bosing)",
 }
