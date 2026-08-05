@@ -11,6 +11,7 @@ import re
 
 from bot.ai.client import cf_chat
 from bot.ai.models import INTERVIEW_MODEL
+from bot.ai.parser import extract_text
 from bot.ai.prompts import INTERVIEW_SYSTEM
 
 logger = logging.getLogger(__name__)
@@ -154,14 +155,6 @@ def _get_vacancy_context(position: str) -> str:
     return _DEFAULT_VACANCY_CONTEXT
 
 
-def _extract_text(result: dict) -> str:
-    """Извлекает текст ответа из структуры CF API."""
-    inner = (result.get("result") or {}).get("response") or ""
-    if isinstance(inner, dict):
-        inner = inner.get("content") or inner.get("text") or str(inner)
-    return str(inner).strip()
-
-
 def _parse_step(raw: str) -> dict | None:
     """Пробует распарсить JSON или Python-dict из строки ответа модели."""
     match = re.search(r"\{.*\}", raw, re.DOTALL)
@@ -255,7 +248,7 @@ async def get_next_step(
         logger.warning("cf_chat вернул None — интервью завершается")
         return {"done": True, "reason": "AI недоступен"}
 
-    raw = _extract_text(result)
+    raw = extract_text(result) or ""
     logger.debug("CF raw ответ (интервью): %r", raw[:300] if raw else "<пусто>")
 
     if not raw:
