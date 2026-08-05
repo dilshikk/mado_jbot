@@ -14,6 +14,18 @@ def _field(data: dict[str, Any], key: str) -> str:
     return str(value) if value is not None else _NONE_PLACEHOLDER
 
 
+def _metro(data: dict[str, Any], lang: str = "ru") -> str:
+    """Возвращает название станции метро из FSM-данных.
+
+    Приоритет:
+    1. metro_name  — строка, сохранённая хендлером metro.py при выборе станции
+    2. metro       — старое текстовое поле (обратная совместимость)
+    3. «—»         — если ни одного нет
+    """
+    name = data.get("metro_name") or data.get("metro")
+    return str(name) if name else _NONE_PLACEHOLDER
+
+
 def build_resume_text(data: dict[str, Any], lang: str) -> str:
     L              = LOCALIZATION[lang]
     video_duration = data.get("video_duration", 0)
@@ -33,7 +45,7 @@ def build_resume_text(data: dict[str, Any], lang: str) -> str:
         f"👤 {L['field_name']}: {_field(data, 'name')}\n"
         f"📅 {L['field_birthday']}: {_field(data, 'birthday')}\n"
         f"🚻 {L['field_gender']}: {_field(data, 'gender')}\n"
-        f"🚇 {L.get('field_metro', 'Метро')}: {_field(data, 'metro')}\n"
+        f"🚇 {L.get('field_metro', 'Метро')}: {_metro(data, lang)}\n"
         f"💪 {'Опыт работы' if lang == 'ru' else 'Ish tajribasi'}: {_field(data, 'experience')}\n"
         f"📅 {'Готовность к работе' if lang == 'ru' else 'Ishga tayyorlik'}: {_field(data, 'readiness')}\n"
         f"💰 {'Зарплатные ожидания' if lang == 'ru' else 'Ish haqi kutilmalari'}: {_field(data, 'salary')}\n"
@@ -53,7 +65,7 @@ def build_hr_resume_text(data: dict[str, Any], user_id: int, username: str) -> s
         f"👤 <b>{L['field_name']}:</b> {_field(data, 'name')}\n"
         f"📅 <b>{L['field_birthday']}:</b> {_field(data, 'birthday')}\n"
         f"🚻 <b>{L['field_gender']}:</b> {_field(data, 'gender')}\n"
-        f"🚇 <b>{L.get('field_metro', 'Ближайшее метро')}:</b> {_field(data, 'metro')}\n"
+        f"🚇 <b>{L.get('field_metro', 'Ближайшее метро')}:</b> {_metro(data)}\n"
         f"💪 <b>Опыт работы:</b> {_field(data, 'experience')}\n"
         f"🏢 <b>Где работал:</b> {_field(data, 'exp_company')}\n"
         f"👔 <b>Должность:</b> {_field(data, 'exp_position')}\n"
