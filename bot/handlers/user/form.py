@@ -60,6 +60,16 @@ def _valid_position_labels(vacancies: list[dict]) -> set[str]:
     return labels
 
 
+def _languages_str(data: dict) -> str | None:
+    """Возвращает строку языков независимо от того, строка или список хранится в FSM."""
+    val = data.get("languages")
+    if not val:
+        return None
+    if isinstance(val, list):
+        return ", ".join(str(v) for v in val)
+    return str(val)
+
+
 @router.message(StateFilter(*_FORM_ACTIVE_STATES), IsCancelMessage())
 @router.message(StateFilter(*_FORM_ACTIVE_STATES), Command("cancel"))
 async def cancel_form(message: Message, state: FSMContext, lang: str) -> None:
@@ -96,7 +106,7 @@ async def start_anketa(message: Message, state: FSMContext, lang: str, session: 
     if not is_admin:
         status = await db.get_application_status(session, message.from_user.id)
         if status in BLOCKING_STATUSES:
-            key = f"anketa_block_{status}"
+            key  = f"anketa_block_{status}"
             text = LOCALIZATION[lang].get(key) or LOCALIZATION[lang]["anketa_block_pending"]
             with suppress(TelegramAPIError):
                 await message.answer(text, parse_mode="HTML")
@@ -392,11 +402,14 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
 
     # ── 2. Записываем в Google Sheets ────────────────────────────────────────
     metro_name = data.get("metro_name") or "—"
+    # languages хранится как строка "Русский, Турецкий" (или None)
+    languages_str = _languages_str(data)
+
     row_data = [
         now_str, data.get("branch"), data.get("position"), data.get("name"),
         data.get("birthday"), data.get("gender"), data.get("phone"),
         metro_name,
-        ", ".join(data.get("languages") or []) or None,
+        languages_str,
         data.get("readiness"), data.get("experience", "—"),
         data.get("exp_company"), data.get("exp_position"),
         data.get("exp_duration"), data.get("exp_duties"),
@@ -439,7 +452,6 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
 
     form_data_for_interview = dict(data)
     form_data_for_interview["username"] = username_raw
-    # Передаём metro_name для отображения в HR-пакете
     if not form_data_for_interview.get("metro_name"):
         form_data_for_interview["metro_name"] = "—"
 
