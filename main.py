@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramNetworkError
 
 from bot.core.config import ADMIN_CHAT_ID, settings
 from bot.core.loader import create_bot, create_dispatcher, create_storage
@@ -30,7 +30,7 @@ async def on_startup(bot: Bot) -> None:
     with suppress(TelegramAPIError):
         await bot.send_message(
             chat_id=ADMIN_CHAT_ID,
-            text="🟢 <b>Бот MADO запущен</b> и готов к работе.",
+            text="🟢 Бот MADO запущен и готов к работе.",
             parse_mode="HTML",
         )
     bot_info = await bot.get_me()
@@ -42,7 +42,7 @@ async def on_shutdown(bot: Bot) -> None:
     with suppress(TelegramAPIError):
         await bot.send_message(
             chat_id=ADMIN_CHAT_ID,
-            text="🔴 <b>Бот MADO остановлен.</b>",
+            text="🔴 Бот MADO остановлен.",
             parse_mode="HTML",
         )
 
@@ -50,9 +50,9 @@ async def on_shutdown(bot: Bot) -> None:
 async def main() -> None:
     setup_logging(settings.log_path, settings.log_level_int)
 
-    bot     = create_bot()
+    bot = create_bot()
     storage = create_storage()
-    dp      = create_dispatcher(storage)
+    dp = create_dispatcher(storage)
 
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
@@ -62,27 +62,46 @@ async def main() -> None:
         loop.add_signal_handler(sig, lambda: asyncio.create_task(dp.stop_polling()))
 
     scheduler = AsyncIOScheduler(timezone="Asia/Tashkent")
-    scheduler.add_job(send_interview_reminders,  "interval", minutes=30, args=[bot])
-    scheduler.add_job(notify_stale_applications, "interval", hours=12,   args=[bot])
-    scheduler.add_job(auto_unblock_users,        "interval", hours=24,   args=[bot])
+    scheduler.add_job(send_interview_reminders,   "interval", minutes=30, args=[bot])
+    scheduler.add_job(notify_stale_applications,  "interval", hours=12,   args=[bot])
+    scheduler.add_job(auto_unblock_users,         "interval", hours=24,   args=[bot])
     scheduler.start()
 
-    try:
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
-    finally:
-        # Graceful shutdown: новые задачи не запускаются,
-        # выполняющиеся дожидаются завершения
-        with suppress(Exception):
-            scheduler.pause()
-        with suppress(Exception):
-            scheduler.shutdown(wait=True)
-        with suppress(Exception):
-            await storage.close()
-        with suppress(Exception):
-            await engine.dispose()
-        with suppress(Exception):
-            await bot.session.close()
-        logger.info("Бот корректно остановлен.")
+    # Автоповтор при временных сетевых ошибках
+    retry_delay = 5
+    while True:
+        try:
+            await dp.start_polling(
+                bot,
+                allowed_updates=dp.resolve_used_update_types(),
+                # Таймаут long-poll запроса
+                polling_timeout=30,
+            )
+            break  # нормальный выход (SIGINT/SIGTERM)
+        except TelegramNetworkError as e:
+            logger.warning(
+                "Сетевая ошибка polling: %s. Повтор через %d сек...", e, retry_delay
+            )
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, 60)  # экспоненциальный backoff, макс 60 сек
+        except Exception as e:
+            logger.exception("Критическая ошибка polling: %s", e)
+            break
+        finally:
+            retry_delay = 5  # сброс после успешного подключения
+
+    # Graceful shutdown
+    with suppress(Exception):
+        scheduler.pause()
+    with suppress(Exception):
+        scheduler.shutdown(wait=True)
+    with suppress(Exception):
+        await storage.close()
+    with suppress(Exception):
+        await engine.dispose()
+    with suppress(Exception):
+        await bot.session.close()
+    logger.info("Бот корректно остановлен.")
 
 
 if __name__ == "__main__":
