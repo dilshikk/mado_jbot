@@ -34,12 +34,12 @@ BLOCKING_STATUSES = {"pending", "accepted", "hired", "hold"}
 
 # Все активные шаги анкеты (waiting_for_lang исключён — там своя логика)
 _FORM_ACTIVE_STATES = (
-    Form.waiting_branch, Form.waiting_position, Form.waiting_name,
-    Form.waiting_birthday, Form.waiting_gender, Form.waiting_address,
-    Form.waiting_metro, Form.waiting_citizenship, Form.waiting_languages,
-    Form.waiting_phone, Form.waiting_experience,
+    Form.waiting_name, Form.waiting_birthday, Form.waiting_gender,
+    Form.waiting_phone, Form.waiting_address, Form.waiting_metro,
+    Form.waiting_citizenship, Form.waiting_languages,
+    Form.waiting_position, Form.waiting_readiness, Form.waiting_experience,
     Form.waiting_exp_company, Form.waiting_exp_position, Form.waiting_exp_duration,
-    Form.waiting_exp_duties, Form.waiting_readiness, Form.waiting_salary,
+    Form.waiting_exp_duties, Form.waiting_salary,
     Form.waiting_schedule, Form.waiting_evening_shifts, Form.waiting_weekends,
     Form.waiting_smoking, Form.waiting_med_book,
     Form.waiting_photo, Form.waiting_video, Form.waiting_confirmation,
@@ -94,38 +94,8 @@ async def start_anketa(message: Message, state: FSMContext, lang: str, session: 
             await message.answer(text, parse_mode="HTML")
             return
 
-    await message.answer(LOCALIZATION[lang]["ask_branch"], reply_markup=kb.get_branch_keyboard(lang), parse_mode="HTML")
-    await state.set_state(Form.waiting_branch)
-
-
-@router.message(Form.waiting_branch)
-async def process_branch(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
-    if VALID_BRANCH not in (message.text or ""):
-        await message.answer(LOCALIZATION[lang]["ask_branch"], reply_markup=kb.get_branch_keyboard(lang), parse_mode="HTML")
-        return
-    await state.update_data(branch=message.text)
-    vacancies = await db.get_active_vacancies(session)
-    await message.answer(
-        LOCALIZATION[lang]["ask_position"],
-        reply_markup=kb.get_positions_keyboard(lang, vacancies),
-        parse_mode="HTML",
-    )
-    await state.set_state(Form.waiting_position)
-
-
-@router.message(Form.waiting_position)
-async def process_position(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
-    vacancies = await db.get_active_vacancies(session)
-    valid     = _valid_position_labels(vacancies)
-    chosen    = (message.text or "").strip()
-    if chosen not in valid:
-        await message.answer(
-            LOCALIZATION[lang]["ask_position"],
-            reply_markup=kb.get_positions_keyboard(lang, vacancies),
-            parse_mode="HTML",
-        )
-        return
-    await state.update_data(position=chosen)
+    # ── Раздел «Личные данные»: ФИО первым шагом ──
+    await state.update_data(branch=VALID_BRANCH)
     await message.answer(LOCALIZATION[lang]["ask_name"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_name)
 
@@ -170,20 +140,22 @@ async def process_gender(message: Message, state: FSMContext, lang: str) -> None
         await message.answer(LOCALIZATION[lang]["ask_gender"], reply_markup=kb.get_gender_keyboard(lang), parse_mode="HTML")
         return
     await state.update_data(gender=message.text)
+    await message.answer(LOCALIZATION[lang]["ask_phone"], reply_markup=kb.get_phone_keyboard(lang), parse_mode="HTML")
+    await state.set_state(Form.waiting_phone)
+
+
+@router.message(Form.waiting_phone)
+async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
+    phone = message.contact.phone_number if message.contact else (message.text or "").strip()
+    if not message.contact and not re.match(r"^\+?\d{7,15}$", phone):
+        await message.answer(
+            "Введите корректный номер: <code>+998901234567</code>" if lang == "ru" else "To'g'ri raqam kiriting: <code>+998901234567</code>",
+            parse_mode="HTML",
+        )
+        return
+    await state.update_data(phone=phone)
     await message.answer(LOCALIZATION[lang]["ask_address"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_address)
-
-
-@router.message(Form.waiting_citizenship)
-async def process_citizenship(message: Message, state: FSMContext, lang: str) -> None:
-    text = (message.text or "").strip()
-    skip_value = LOCALIZATION[lang].get("citizenship_skip", LOCALIZATION[lang]["btn_skip"])
-    if not text:
-        await message.answer(LOCALIZATION[lang]["ask_citizenship"], reply_markup=kb.get_citizenship_keyboard(lang), parse_mode="HTML")
-        return
-    await state.update_data(citizenship=None if text == skip_value else text)
-    await message.answer(LOCALIZATION[lang]["ask_experience_yn"], reply_markup=kb.get_experience_yn_keyboard(lang), parse_mode="HTML")
-    await state.set_state(Form.waiting_experience)
 
 
 @router.message(Form.waiting_address)
@@ -214,19 +186,35 @@ async def process_metro(message: Message, state: FSMContext, lang: str) -> None:
     await state.set_state(Form.waiting_citizenship)
 
 
-@router.message(Form.waiting_phone)
-async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
-    phone = message.contact.phone_number if message.contact else (message.text or "").strip()
-    if not message.contact and not re.match(r"^\+?\d{7,15}$", phone):
+@router.message(Form.waiting_citizenship)
+async def process_citizenship(message: Message, state: FSMContext, lang: str) -> None:
+    text = (message.text or "").strip()
+    skip_value = LOCALIZATION[lang].get("citizenship_skip", LOCALIZATION[lang]["btn_skip"])
+    if not text:
+        await message.answer(LOCALIZATION[lang]["ask_citizenship"], reply_markup=kb.get_citizenship_keyboard(lang), parse_mode="HTML")
+        return
+    await state.update_data(citizenship=None if text == skip_value else text)
+    await message.answer(LOCALIZATION[lang]["ask_languages"], reply_markup=kb.get_languages_keyboard(lang), parse_mode="HTML")
+    await state.set_state(Form.waiting_languages)
+
+
+# ── Раздел «Информация о работе»: должность → готовность → опыт → ... ──
+
+@router.message(Form.waiting_position)
+async def process_position(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
+    vacancies = await db.get_active_vacancies(session)
+    valid     = _valid_position_labels(vacancies)
+    chosen    = (message.text or "").strip()
+    if chosen not in valid:
         await message.answer(
-            "Введите корректный номер: <code>+998901234567</code>" if lang == "ru" else "To'g'ri raqam kiriting: <code>+998901234567</code>",
+            LOCALIZATION[lang]["ask_position"],
+            reply_markup=kb.get_positions_keyboard(lang, vacancies),
             parse_mode="HTML",
         )
         return
-    await state.update_data(phone=phone)
-    ask_video = LOCALIZATION[lang]["ask_video"]
-    await message.answer(ask_video, reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
-    await state.set_state(Form.waiting_video)
+    await state.update_data(position=chosen)
+    await message.answer(LOCALIZATION[lang]["ask_readiness"], reply_markup=kb.get_readiness_keyboard(lang), parse_mode="HTML")
+    await state.set_state(Form.waiting_readiness)
 
 
 @router.message(Form.waiting_video)
@@ -250,6 +238,7 @@ async def process_video(message: Message, state: FSMContext, lang: str) -> None:
             )
             return
         await state.update_data(video_file_id=file_id, is_video_note=is_note, video_duration=duration)
+    # ── Итоговая сводка анкеты → подтверждение ──
     data    = await state.get_data()
     summary = build_resume_text(data, lang)
     await message.answer(summary, reply_markup=kb.get_confirmation_keyboard(lang), parse_mode="HTML")
@@ -329,9 +318,14 @@ async def process_confirmation(message: Message, state: FSMContext, lang: str, s
 
     row_data = [
         now_str, data.get("branch"), data.get("position"), data.get("name"),
-        data.get("birthday"), data.get("gender"), data.get("family"),
-        data.get("citizenship"), data.get("address"), data.get("experience", "—"),
-        data.get("phone"),
+        data.get("birthday"), data.get("gender"), data.get("phone"),
+        data.get("address"), data.get("metro"), data.get("citizenship"),
+        ", ".join(data.get("languages") or []) or None,
+        data.get("readiness"), data.get("experience", "—"),
+        data.get("exp_company"), data.get("exp_position"),
+        data.get("exp_duration"), data.get("exp_duties"),
+        data.get("salary"), data.get("schedule"), data.get("evening_shifts"),
+        data.get("weekends"), data.get("smoking"), data.get("med_book"),
     ]
     try:
         success = await asyncio.to_thread(append_to_sheet, row_data)
