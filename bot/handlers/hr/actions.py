@@ -19,11 +19,19 @@ from bot.states import HRReview, HRScore
 router = Router()
 logger = logging.getLogger(__name__)
 
+
+# ── Нажата кнопка «✅ Одобрить» ─────────────────────────────────────────────
+
 @router.callback_query(F.data.startswith("hr_accept:"))
 async def hr_accept_callback(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     candidate_id = int(callback.data.split(":")[1])
-    view_count = await db.increment_view_count(session, candidate_id)
+    view_count   = await db.increment_view_count(session, candidate_id)
     logger.info("Анкета user_id=%d просмотрена HR, просмотров: %d", candidate_id, view_count)
+
+    # Получаем имя кандидата для отображения
+    app  = await db.get_latest_application(session, candidate_id)
+    name = (app or {}).get("name") or f"id {candidate_id}"
+
     await state.update_data(
         reviewing_candidate_id=candidate_id,
         hr_chat_id=callback.message.chat.id,
@@ -31,43 +39,107 @@ async def hr_accept_callback(callback: CallbackQuery, state: FSMContext, session
         candidate_anketa_text=callback.message.text or "",
     )
     await state.set_state(HRReview.waiting_for_interview_details)
-    await callback.message.reply(LOCALIZATION["ru"]["hr_ask_interview"], parse_mode="HTML")
+
+    # Показываем сообщение с быстрыми кнопками выбора даты
+    text = (
+        f"{LOCALIZATION['ru']['hr_ask_interview']}\n\n"
+        f"👤 Кандидат: <b>{name}</b> (ID: <code>{candidate_id}</code>)"
+    )
+    await callback.message.answer(
+        text,
+        reply_markup=kb.get_interview_schedule_keyboard(candidate_id),
+        parse_mode="HTML",
+    )
     with suppress(TelegramAPIError):
         await callback.answer()
+
+
+# ── Быстрый выбор даты через inline-кнопку ──────────────────────────────────
+
+@router.callback_query(F.data.startswith("hr_schedule:"))
+async def hr_schedule_quick(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    """HR выбрал готовую дату/время из inline-клавиатуры."""
+    # формат: hr_schedule:{candidate_id}:{дата в {время}
+    parts        = callback.data.split(":", 2)
+    candidate_id = int(parts[1])
+    date_value   = parts[2]  # например "05.08 в 10:00"
+
+    await _confirm_interview(
+        bot=callback.bot,
+        state=state,
+        session=session,
+        message=callback.message,
+        candidate_id=candidate_id,
+        interview_text=date_value,
+    )
+    with suppress(TelegramAPIError):
+        await callback.answer("✅ Собеседование назначено!")
+
+
+# ── Отмена через кнопку ──────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("hr_schedule_cancel:"))
+async def hr_schedule_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    with suppress(TelegramAPIError):
+        await callback.message.edit_reply_markup(reply_markup=None)
+    with suppress(TelegramAPIError):
+        await callback.answer("🔄 Отменено")
+    await callback.message.answer(LOCALIZATION["ru"]["hr_interview_cancelled"], parse_mode="HTML")
+
+
+# ── Отмена командой ──────────────────────────────────────────────────────────
 
 @router.message(HRReview.waiting_for_interview_details, F.text.in_(["/cancel", "отмена", "Отмена", "bekor qilish"]))
 async def cancel_hr_review(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer(LOCALIZATION["ru"]["hr_action_cancelled"], parse_mode="HTML")
+    await message.answer(LOCALIZATION["ru"]["hr_interview_cancelled"], parse_mode="HTML")
+
+
+# ── Ручной ввод даты сообщением ──────────────────────────────────────────────
 
 @router.message(HRReview.waiting_for_interview_details)
 async def process_interview_details(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if not message.text:
         return
-    bot: Bot = message.bot
-    hr_data = await state.get_data()
+    hr_data      = await state.get_data()
     candidate_id = hr_data["reviewing_candidate_id"]
-    hr_chat_id = hr_data["hr_chat_id"]
-    hr_msg_id = hr_data["hr_msg_id"]
-    anketa_text = hr_data.get("candidate_anketa_text", "")
-    interview_text = message.text
+    interview_text = message.text.strip()
+
+    # Убираем inline-клавиатуру предыдущего сообщения
+    hr_chat_id = hr_data.get("hr_chat_id")
+    hr_msg_id  = hr_data.get("hr_msg_id")
+    # Пробуем найти сообщение с клавиатурой (оно было отправлено после hr_msg_id)
+    # Проще просто продолжить — edit не критичен
+
+    await _confirm_interview(
+        bot=message.bot,
+        state=state,
+        session=session,
+        message=message,
+        candidate_id=candidate_id,
+        interview_text=interview_text,
+    )
+
+
+# ── Общая логика подтверждения ───────────────────────────────────────────────
+
+async def _confirm_interview(
+    bot: Bot,
+    state: FSMContext,
+    session: AsyncSession,
+    message: Message,
+    candidate_id: int,
+    interview_text: str,
+) -> None:
+    hr_data      = await state.get_data()
+    hr_chat_id   = hr_data.get("hr_chat_id")
+    hr_msg_id    = hr_data.get("hr_msg_id")
+    anketa_text  = hr_data.get("candidate_anketa_text", "")
 
     interview_iso = _parse_interview_datetime(interview_text)
-
-    # Если дата не распознана — предупреждаем HR, не меняем статус кандидата
-    if not interview_iso:
-        await message.answer(
-            "⚠️ <b>Не удалось распознать дату и время.</b>\n\n"
-            "Примеры корректного формата:\n"
-            "• <code>25.07.2025 в 14:00</code>\n"
-            "• <code>25.07.2025 14:00</code>\n"
-            "• <code>25.07 в 14:00</code>\n\n"
-            "Попробуйте ещё раз или отправьте <code>/cancel</code> для отмены.",
-            parse_mode="HTML",
-        )
-        return
-
-    await db.set_interview_time(session, candidate_id, interview_iso)
+    if interview_iso:
+        await db.set_interview_time(session, candidate_id, interview_iso)
     await db.update_application_status(session, candidate_id, "accepted")
 
     candidate_lang = await db.get_user_lang(session, candidate_id) or "ru"
@@ -76,19 +148,25 @@ async def process_interview_details(message: Message, state: FSMContext, session
 
     with suppress(TelegramAPIError):
         await bot.send_message(chat_id=candidate_id, text=notice, parse_mode="HTML")
+
     with suppress(TelegramAPIError):
         await bot.edit_message_text(
             chat_id=hr_chat_id, message_id=hr_msg_id,
             text=f"{anketa_text}\n\n{status}", parse_mode="HTML",
             reply_markup=kb.get_post_interview_keyboard(candidate_id),
         )
+
     await message.answer(LOCALIZATION["ru"]["hr_success_sent"], parse_mode="HTML")
     await state.clear()
+    logger.info("Собеседование назначено: candidate_id=%d text=%r", candidate_id, interview_text)
+
+
+# ── Принять на работу ────────────────────────────────────────────────────────
 
 @router.callback_query(F.data.startswith("hr_hire:"))
 async def hr_hire_callback(callback: CallbackQuery, session: AsyncSession) -> None:
     candidate_id = int(callback.data.split(":")[1])
-    bot: Bot = callback.bot
+    bot: Bot     = callback.bot
 
     await db.update_application_status(session, candidate_id, "hired")
     candidate_lang = await db.get_user_lang(session, candidate_id) or "ru"
@@ -106,10 +184,13 @@ async def hr_hire_callback(callback: CallbackQuery, session: AsyncSession) -> No
         await callback.answer("🏆 Кандидат принят на работу!", show_alert=True)
     logger.info("Кандидат user_id=%d принят на работу", candidate_id)
 
+
+# ── Отклонить ────────────────────────────────────────────────────────────────
+
 @router.callback_query(F.data.startswith("hr_reject:"))
 async def hr_reject_callback(callback: CallbackQuery, session: AsyncSession) -> None:
     candidate_id = int(callback.data.split(":")[1])
-    bot: Bot = callback.bot
+    bot: Bot     = callback.bot
 
     await db.block_user(session, candidate_id, days=30)
     await db.update_application_status(session, candidate_id, "rejected")
@@ -129,13 +210,15 @@ async def hr_reject_callback(callback: CallbackQuery, session: AsyncSession) -> 
     with suppress(TelegramAPIError):
         await callback.answer(LOCALIZATION["ru"]["hr_alert_rejected"], show_alert=True)
 
+
+# ── На паузу ─────────────────────────────────────────────────────────────────
+
 @router.callback_query(F.data.startswith("hr_hold:"))
 async def hr_hold_callback(callback: CallbackQuery, session: AsyncSession) -> None:
     candidate_id = int(callback.data.split(":")[1])
-    bot: Bot = callback.bot
+    bot: Bot     = callback.bot
     await db.update_application_status(session, candidate_id, "hold")
 
-    # Уведомляем кандидата о переносе анкеты на паузу
     candidate_lang = await db.get_user_lang(session, candidate_id) or "ru"
     with suppress(TelegramAPIError):
         await bot.send_message(
@@ -143,7 +226,6 @@ async def hr_hold_callback(callback: CallbackQuery, session: AsyncSession) -> No
             text=LOCALIZATION[candidate_lang]["candidate_hold_notice"],
             parse_mode="HTML",
         )
-
     with suppress(TelegramAPIError):
         await bot.edit_message_text(
             chat_id=callback.message.chat.id, message_id=callback.message.message_id,
@@ -153,10 +235,13 @@ async def hr_hold_callback(callback: CallbackQuery, session: AsyncSession) -> No
     with suppress(TelegramAPIError):
         await callback.answer("⏸ Кандидат отложен.")
 
+
+# ── Оценка кандидата ─────────────────────────────────────────────────────────
+
 @router.callback_query(F.data.startswith("score:"))
 async def hr_score_callback(callback: CallbackQuery, state: FSMContext) -> None:
     _, score_str, candidate_id_str = callback.data.split(":")
-    score = int(score_str)
+    score        = int(score_str)
     candidate_id = int(candidate_id_str)
     await state.update_data(
         score_candidate_id=candidate_id, score_value=score,
@@ -178,23 +263,26 @@ async def cancel_score(message: Message, state: FSMContext) -> None:
 
 @router.message(HRScore.waiting_for_comment)
 async def process_score_comment(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    hr_data = await state.get_data()
+    hr_data      = await state.get_data()
     candidate_id = hr_data["score_candidate_id"]
-    score = hr_data["score_value"]
-    comment = "" if message.text == "/skip" else (message.text or "")
+    score        = hr_data["score_value"]
+    comment      = "" if message.text == "/skip" else (message.text or "")
 
     await db.save_hr_score(session, candidate_id, score, comment)
-    stars = "⭐️" * score + "☆" * (5 - score)
+    stars   = "⭐️" * score + "☆" * (5 - score)
     confirm = f"✅ Оценка сохранена: {stars} " + (f"\n💬 {comment}" if comment else "")
     await message.answer(confirm, parse_mode="HTML")
     await state.clear()
+
+
+# ── Утилита ──────────────────────────────────────────────────────────────────
 
 def _parse_interview_datetime(text: str) -> str | None:
     current_year = datetime.now().year
     patterns: list[tuple[str, str, bool]] = [
         (r"\d{2}\.\d{2}\.\d{4}\s+в\s+\d{2}:\d{2}", "%d.%m.%Y в %H:%M", False),
-        (r"\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}", "%d.%m.%Y %H:%M", False),
-        (r"\d{2}\.\d{2}\s+в\s+\d{2}:\d{2}", "%d.%m в %H:%M", True),
+        (r"\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}",     "%d.%m.%Y %H:%M",   False),
+        (r"\d{2}\.\d{2}\s+в\s+\d{2}:\d{2}",         "%d.%m в %H:%M",    True),
     ]
     for pattern, fmt, needs_year in patterns:
         match = re.search(pattern, text)
