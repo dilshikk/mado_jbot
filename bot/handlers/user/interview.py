@@ -8,7 +8,11 @@ from datetime import datetime
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
+from aiogram.types import (
+    InlineKeyboardButton, InlineKeyboardMarkup,
+    Message, CallbackQuery,
+    ReplyKeyboardRemove,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.ai.agents import run_all_agents
@@ -40,14 +44,10 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def _clean_username(raw: str | None) -> str:
-    """Возвращает @username или 'отсутствует' если username не задан.
-
-    Убирает лишние @ чтобы не было @@username.
-    """
+    """Возвращает @username или 'отсутствует' если username не задан."""
     if not raw:
         return "отсутствует"
     clean = raw.lstrip("@").strip()
-    # Telegram username: только буквы, цифры, подчёркивания, длина 5+
     if not clean or len(clean) < 4 or not all(c.isalnum() or c == "_" for c in clean):
         return "отсутствует"
     return f"@{clean}"
@@ -65,10 +65,9 @@ async def _send_hr_report(
     if not interview:
         return
 
-    app = await db.get_latest_application(session, user_id)
+    app  = await db.get_latest_application(session, user_id)
     name = (app or {}).get("name", f"user#{user_id}")
 
-    # Username берём из form_data (там он самый свежий, передаётся из message.from_user)
     raw_username = (form_data or {}).get("username") or (app or {}).get("username")
     username_str = _clean_username(raw_username)
 
@@ -82,10 +81,7 @@ async def _send_hr_report(
         f"{'─'*30}\n"
     )
 
-    # Основной блок — текстовый summary из Python-рендера
-    summary = interview.get("report_summary") or ""
-
-    # Hiring Decision — читаем из JSON
+    summary        = interview.get("report_summary") or ""
     decision_raw   = interview.get("report_decision")
     decision_block = ""
     if decision_raw:
@@ -104,8 +100,6 @@ async def _send_hr_report(
             pass
 
     full_text = header + summary + decision_block
-
-    # Telegram: макс. 4096 символов
     if len(full_text) > 4000:
         full_text = full_text[:3990] + "\n …(обрезано) "
 
@@ -148,7 +142,11 @@ async def start_interview(
         if lang == "ru" else
         "🤖 Recruiter AI \n\nJuda yaxshi! Endi men sizga bir necha savol beraman.\n\n"
     )
-    await message.answer(intro + f" {question} ", parse_mode="HTML", reply_markup=_skip_kb(lang))
+
+    # Сначала убираем reply-клавиатуру от шага подтверждения анкеты
+    await message.answer(intro, reply_markup=ReplyKeyboardRemove(), parse_mode="HTML")
+    # Затем отправляем первый вопрос с inline-кнопками
+    await message.answer(f"❓ {question}", parse_mode="HTML", reply_markup=_skip_kb(lang))
 
 
 @router.message(Interview.answering)
@@ -184,7 +182,7 @@ async def process_answer(message: Message, state: FSMContext, session: AsyncSess
         interview_current_q=question,
         interview_asked_questions=asked_questions,
     )
-    await message.answer(f"🤖 {question} ", parse_mode="HTML", reply_markup=_skip_kb(lang))
+    await message.answer(f"🤖 {question}", parse_mode="HTML", reply_markup=_skip_kb(lang))
 
 
 @router.callback_query(Interview.answering, F.data == "interview:skip")
@@ -216,13 +214,14 @@ async def skip_question(callback: CallbackQuery, state: FSMContext, session: Asy
             question = _fallback_question(lang, qa_log, asked_questions)
         else:
             asked_questions.append(normalized)
+
     await db.update_interview_session(session, session_id, q_count=len(qa_log) + 1)
     await state.update_data(
         interview_qa_log=qa_log,
         interview_current_q=question,
         interview_asked_questions=asked_questions,
     )
-    await callback.message.answer(f"🤖 {question} ", parse_mode="HTML", reply_markup=_skip_kb(lang))
+    await callback.message.answer(f"🤖 {question}", parse_mode="HTML", reply_markup=_skip_kb(lang))
 
 
 @router.callback_query(Interview.answering, F.data == "interview:finish")
@@ -258,7 +257,6 @@ async def _finish_interview(
     )
     await message.answer(thanks, parse_mode="HTML")
 
-    # Уведомляем HR что идёт обработка
     user_id = message.from_user.id if message.from_user else message.chat.id
     try:
         app  = await db.get_latest_application(session, user_id)
@@ -276,7 +274,6 @@ async def _finish_interview(
         user_id, session_id, len(qa_log),
     )
 
-    # Запускаем пайплайн
     try:
         reports = await run_all_agents(form_data, qa_log)
     except Exception as e:
@@ -284,7 +281,6 @@ async def _finish_interview(
         await db.update_application_status(session, user_id, "interview_failed")
         return
 
-    # Сохраняем в БД
     await db.save_interview_reports(
         session,
         session_id=session_id,
@@ -298,7 +294,6 @@ async def _finish_interview(
         summary=reports.get("summary"),
     )
 
-    # Отправляем отчёт в HR-чат (передаём form_data чтобы взять username)
     await _send_hr_report(message.bot, session, session_id, user_id, form_data=form_data)
 
 
@@ -324,5 +319,4 @@ def _fallback_question(lang: str, qa_log: list[dict], asked_questions: list[str]
         if question.casefold() not in asked_questions:
             asked_questions.append(question.casefold())
             return question
-    # Все вопросы исчерпаны — повторяем первый
     return pool[0]
