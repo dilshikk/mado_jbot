@@ -64,6 +64,9 @@ class FakeMessage:
     async def edit_text(self, text: str, **kwargs) -> None:
         self.edited_texts.append(text)
 
+    async def edit_reply_markup(self, **kwargs) -> None:
+        """No-op: hr_hire_callback clears the inline keyboard after acting."""
+
     async def delete(self) -> None:
         self.deleted = True
 
