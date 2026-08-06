@@ -50,6 +50,24 @@ def _make_message(user_id: int, chat_type: str = "private", text: str | None = N
     )
 
 
+class _FakeAnswerable:
+    """Wraps a real aiogram Message/CallbackQuery so `.answer()` is a no-op
+    instead of raising because it isn't bound to a live Bot instance."""
+
+    def __init__(self, wrapped):
+        self._wrapped = wrapped
+
+    def __getattr__(self, name):
+        return getattr(self._wrapped, name)
+
+    async def answer(self, *args, **kwargs) -> None:
+        return None
+
+
+def _make_message_answerable(user_id: int, chat_type: str = "private", text: str | None = None):
+    return _FakeAnswerable(_make_message(user_id, chat_type=chat_type, text=text))
+
+
 def _make_callback(user_id: int, chat_type: str = "private") -> CallbackQuery:
     message = _make_message(user_id, chat_type=chat_type)
     return CallbackQuery.model_construct(
@@ -59,6 +77,10 @@ def _make_callback(user_id: int, chat_type: str = "private") -> CallbackQuery:
         message=message,
         data="anything",
     )
+
+
+def _make_callback_answerable(user_id: int, chat_type: str = "private"):
+    return _FakeAnswerable(_make_callback(user_id, chat_type=chat_type))
 
 
 # ── bot/filters/role.py: IsAdmin ────────────────────────────────────────────
@@ -121,6 +143,11 @@ async def test_is_private_chat_checks_underlying_message_for_callback() -> None:
 
 
 # ── bot/states: FSM state groups exist with expected states ────────────────
+#
+# aiogram's `StatesGroup.__all_states_names__` returns each state's *full*
+# qualified name in the form "GroupName:state_name" (e.g. "Form:waiting_name"),
+# not the bare attribute name. We check membership against that same
+# qualified format below.
 
 
 def test_form_state_group_has_expected_key_states() -> None:
@@ -128,17 +155,17 @@ def test_form_state_group_has_expected_key_states() -> None:
         "waiting_for_lang", "waiting_name", "waiting_birthday", "waiting_phone",
         "waiting_metro", "waiting_position", "waiting_photo", "waiting_confirmation",
     }
-    actual = set(Form.__all_states_names__)
+    actual = {name.split(":", 1)[-1] for name in Form.__all_states_names__}
     assert expected <= actual
 
 
 def test_interview_state_group_has_answering_state() -> None:
-    assert "answering" in Interview.__all_states_names__
+    assert "Interview:answering" in Interview.__all_states_names__
 
 
 def test_hr_review_and_score_state_groups() -> None:
-    assert "waiting_for_interview_details" in HRReview.__all_states_names__
-    assert "waiting_for_comment" in HRScore.__all_states_names__
+    assert "HRReview:waiting_for_interview_details" in HRReview.__all_states_names__
+    assert "HRScore:waiting_for_comment" in HRScore.__all_states_names__
 
 
 def test_broadcast_state_group_has_wizard_steps() -> None:
@@ -146,20 +173,20 @@ def test_broadcast_state_group_has_wizard_steps() -> None:
         "waiting_photo", "waiting_caption", "waiting_url",
         "waiting_url_title", "preview", "sending", "waiting_resend_id",
     }
-    assert expected <= set(Broadcast.__all_states_names__)
+    actual = {name.split(":", 1)[-1] for name in Broadcast.__all_states_names__}
+    assert expected <= actual
 
 
 def test_vacancy_state_groups() -> None:
-    assert {"waiting_name_ru", "waiting_name_uz", "waiting_emoji"} <= set(
-        AddVacancy.__all_states_names__
-    )
-    assert {"choosing_field", "waiting_value"} <= set(EditVacancy.__all_states_names__)
+    add_states = {name.split(":", 1)[-1] for name in AddVacancy.__all_states_names__}
+    edit_states = {name.split(":", 1)[-1] for name in EditVacancy.__all_states_names__}
+    assert {"waiting_name_ru", "waiting_name_uz", "waiting_emoji"} <= add_states
+    assert {"choosing_field", "waiting_value"} <= edit_states
 
 
 def test_dashboard_filter_state_group() -> None:
-    assert {"waiting_position_filter", "waiting_date_from"} <= set(
-        DashboardFilter.__all_states_names__
-    )
+    actual = {name.split(":", 1)[-1] for name in DashboardFilter.__all_states_names__}
+    assert {"waiting_position_filter", "waiting_date_from"} <= actual
 
 
 # ── bot/middlewares/throttling.py: RateLimitMiddleware ──────────────────────
@@ -168,11 +195,11 @@ def test_dashboard_filter_state_group() -> None:
 @pytest.mark.asyncio
 async def test_rate_limit_allows_calls_under_message_limit() -> None:
     middleware = RateLimitMiddleware()
-    message = _make_message(user_id=1)
+    message = _make_message_answerable(user_id=1)
 
     calls = 0
 
-    async def handler(event: Message, data: dict) -> str:
+    async def handler(event, data: dict) -> str:
         nonlocal calls
         calls += 1
         return "ok"
@@ -187,9 +214,9 @@ async def test_rate_limit_allows_calls_under_message_limit() -> None:
 @pytest.mark.asyncio
 async def test_rate_limit_blocks_calls_over_message_limit() -> None:
     middleware = RateLimitMiddleware()
-    message = _make_message(user_id=1, text="hi")
+    message = _make_message_answerable(user_id=1, text="hi")
 
-    async def handler(event: Message, data: dict) -> str:
+    async def handler(event, data: dict) -> str:
         return "ok"
 
     # First 5 calls are allowed (the limit), the 6th within the same window
@@ -204,10 +231,10 @@ async def test_rate_limit_blocks_calls_over_message_limit() -> None:
 @pytest.mark.asyncio
 async def test_rate_limit_tracks_users_independently() -> None:
     middleware = RateLimitMiddleware()
-    user_1_message = _make_message(user_id=1)
-    user_2_message = _make_message(user_id=2)
+    user_1_message = _make_message_answerable(user_id=1)
+    user_2_message = _make_message_answerable(user_id=2)
 
-    async def handler(event: Message, data: dict) -> str:
+    async def handler(event, data: dict) -> str:
         return "ok"
 
     for _ in range(5):
@@ -221,9 +248,9 @@ async def test_rate_limit_tracks_users_independently() -> None:
 @pytest.mark.asyncio
 async def test_rate_limit_uses_higher_limit_for_callbacks() -> None:
     middleware = RateLimitMiddleware()
-    callback = _make_callback(user_id=1)
+    callback = _make_callback_answerable(user_id=1)
 
-    async def handler(event: CallbackQuery, data: dict) -> str:
+    async def handler(event, data: dict) -> str:
         return "ok"
 
     # Callback limit (10) is higher than message limit (5); 8 calls should
