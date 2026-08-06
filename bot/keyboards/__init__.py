@@ -11,8 +11,6 @@ from bot.keyboards.reply import (
     # Административные
     ADMIN_BTN_BACK,
     ADMIN_BTN_CANCEL,
-    get_admin_menu_keyboard,
-    get_admin_back_keyboard,
     get_admin_cancel_keyboard,
     get_admin_skip_cancel_keyboard,
     get_broadcast_photo_kb,
@@ -24,6 +22,7 @@ from bot.keyboards.reply import (
     get_admin_station_confirm_delete_kb,
 )
 from bot.keyboards.inline import (
+    get_admin_menu_inline_kb,
     get_hr_action_keyboard,
     get_hr_hold_keyboard,
     get_metro_lines_keyboard,
@@ -58,8 +57,6 @@ __all__ = [
     # Административные Reply
     "ADMIN_BTN_BACK",
     "ADMIN_BTN_CANCEL",
-    "get_admin_menu_keyboard",
-    "get_admin_back_keyboard",
     "get_admin_cancel_keyboard",
     "get_admin_skip_cancel_keyboard",
     "get_broadcast_photo_kb",
@@ -69,6 +66,8 @@ __all__ = [
     "get_admin_metro_stations_kb",
     "get_admin_station_item_kb",
     "get_admin_station_confirm_delete_kb",
+    # Inline (Admin меню)
+    "get_admin_menu_inline_kb",
     # Inline (HR и метро)
     "get_hr_action_keyboard",
     "get_hr_hold_keyboard",
