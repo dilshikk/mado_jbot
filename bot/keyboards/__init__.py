@@ -8,21 +8,35 @@ from bot.keyboards.reply import (
     get_main_menu,
     get_phone_keyboard,
     get_skip_cancel_keyboard,
-    # Административные
+    # Административные (только для возможных legacy)
     ADMIN_BTN_BACK,
     ADMIN_BTN_CANCEL,
     get_admin_cancel_keyboard,
     get_admin_skip_cancel_keyboard,
-    get_broadcast_photo_kb,
-    get_broadcast_url_kb,
-    get_broadcast_preview_kb,
-    get_admin_metro_lines_kb,
-    get_admin_metro_stations_kb,
-    get_admin_station_item_kb,
-    get_admin_station_confirm_delete_kb,
 )
 from bot.keyboards.inline import (
+    # Admin: главное меню
     get_admin_menu_inline_kb,
+    # Admin: вакансии
+    get_admin_vacancies_inline_kb,
+    get_admin_vacancy_item_inline_kb,
+    get_admin_vacancy_edit_inline_kb,
+    get_admin_vacancy_confirm_delete_inline_kb,
+    # Admin: рассылка
+    get_broadcast_photo_inline_kb,
+    get_broadcast_cancel_inline_kb,
+    get_broadcast_url_inline_kb,
+    get_broadcast_preview_inline_kb,
+    # Admin: resend
+    get_resend_cancel_inline_kb,
+    # Admin: метро
+    get_admin_metro_home_inline_kb,
+    get_admin_metro_stations_inline_kb,
+    get_admin_metro_station_item_inline_kb,
+    get_admin_metro_station_confirm_delete_inline_kb,
+    get_admin_metro_add_line_inline_kb,
+    get_admin_metro_fsm_cancel_inline_kb,
+    # HR и форма
     get_hr_action_keyboard,
     get_hr_hold_keyboard,
     get_metro_lines_keyboard,
@@ -47,28 +61,40 @@ from bot.keyboards.inline_form import (
 __all__ = [
     # Утилита
     "remove_keyboard",
-    # Пользовательские Reply
+    # Reply (пользовательские)
     "get_cancel_keyboard",
     "get_interview_keyboard",
     "get_language_keyboard",
     "get_main_menu",
     "get_phone_keyboard",
     "get_skip_cancel_keyboard",
-    # Административные Reply
+    # Reply (legacy)
     "ADMIN_BTN_BACK",
     "ADMIN_BTN_CANCEL",
     "get_admin_cancel_keyboard",
     "get_admin_skip_cancel_keyboard",
-    "get_broadcast_photo_kb",
-    "get_broadcast_url_kb",
-    "get_broadcast_preview_kb",
-    "get_admin_metro_lines_kb",
-    "get_admin_metro_stations_kb",
-    "get_admin_station_item_kb",
-    "get_admin_station_confirm_delete_kb",
     # Inline (Admin меню)
     "get_admin_menu_inline_kb",
-    # Inline (HR и метро)
+    # Inline (Вакансии)
+    "get_admin_vacancies_inline_kb",
+    "get_admin_vacancy_item_inline_kb",
+    "get_admin_vacancy_edit_inline_kb",
+    "get_admin_vacancy_confirm_delete_inline_kb",
+    # Inline (Рассылка)
+    "get_broadcast_photo_inline_kb",
+    "get_broadcast_cancel_inline_kb",
+    "get_broadcast_url_inline_kb",
+    "get_broadcast_preview_inline_kb",
+    # Inline (Resend)
+    "get_resend_cancel_inline_kb",
+    # Inline (Метро)
+    "get_admin_metro_home_inline_kb",
+    "get_admin_metro_stations_inline_kb",
+    "get_admin_metro_station_item_inline_kb",
+    "get_admin_metro_station_confirm_delete_inline_kb",
+    "get_admin_metro_add_line_inline_kb",
+    "get_admin_metro_fsm_cancel_inline_kb",
+    # Inline (HR + форма)
     "get_hr_action_keyboard",
     "get_hr_hold_keyboard",
     "get_metro_lines_keyboard",
