@@ -1,16 +1,16 @@
 # bot/handlers/user/form_extra.py
 """
 Хендлеры для шагов анкеты «Информация о работе» и «Дополнительно»:
-- Языки владения (Reply мультиселект)
+- Языки владения (Inline мультиселект)
 - Готовность к работе (Inline CallbackQuery)
-- Опыт работы — ветвление Да/Нет (4 под-шага)
-- Зарплатные ожидания
-- График работы
-- Вечерние смены
-- Выходные и праздники
-- Курение
-- Медицинская книжка
-- Фото кандидата
+- Опыт работы — ветвление Да/Нет (Inline) + 4 под-шага (текст)
+- Зарплатные ожидания (текст)
+- График работы (Inline)
+- Вечерние смены (Inline)
+- Выходные и праздники (Inline)
+- Курение (Inline)
+- Медицинская книжка (Inline)
+- Фото кандидата (обычное сообщение)
 """
 from __future__ import annotations
 
@@ -43,39 +43,55 @@ def _skip_text(lang: str) -> str:
     return _t(lang, "btn_skip", "⏭ Пропустить")
 
 
-# ─── 1. Языки владения (мультиселект) ────────────────────────────────────────
+# ─── Публичная функция — вызов из metro.py ────────────────────────────────────
 
-@router.message(Form.waiting_languages)
-async def handle_languages(message: Message, state: FSMContext, session: AsyncSession) -> None:
+async def ask_languages(message: Message, state: FSMContext, lang: str) -> None:
+    """Отправляет inline-клавиатуру выбора языков. Вызывается из metro.py."""
+    await state.set_state(Form.waiting_languages)
+    selected: set[str] = set()
+    await message.answer(
+        _t(lang, "ask_languages"),
+        reply_markup=kb.get_languages_keyboard(lang, selected),
+    )
+
+
+# ─── 1. Языки владения (Inline мультиселект) ──────────────────────────────────
+
+@router.callback_query(Form.waiting_languages, F.data.startswith("lang_toggle:"))
+async def handle_languages(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    await callback.answer()
     data = await state.get_data()
     lang = _lang(data)
-    text = (message.text or "").strip()
-    if text == _skip_text(lang):
+    code = callback.data.split(":")[1]
+
+    if code == "skip":
         await state.update_data(languages=None)
-        await _ask_position_after_languages(message, state, session, lang)
+        with suppress(TelegramAPIError):
+            await callback.message.edit_reply_markup(reply_markup=None)
+        await _ask_position_after_languages(callback.message, state, session, lang)
         return
 
-    if text == _t(lang, "languages_done"):
-        selected = data.get("languages", [])
-        if not selected:
-            await message.answer(_t(lang, "languages_done_empty"))
+    if code == "done":
+        selected_list = data.get("languages", [])
+        if not selected_list:
+            await callback.answer(_t(lang, "languages_done_empty"), show_alert=True)
             return
-        await _ask_position_after_languages(message, state, session, lang)
+        with suppress(TelegramAPIError):
+            await callback.message.edit_reply_markup(reply_markup=None)
+        await _ask_position_after_languages(callback.message, state, session, lang)
         return
 
-    options = {_t(lang, key) for key in ("lang_opt_ru", "lang_opt_uz", "lang_opt_en", "lang_opt_tr", "lang_opt_other")}
-    if text not in options:
-        await message.answer(_t(lang, "ask_languages"), reply_markup=kb.get_languages_keyboard(lang))
-        return
-
-    selected = data.get("languages", [])
-    selected = selected if isinstance(selected, list) else []
-    if text in selected:
-        selected.remove(text)
+    selected: set[str] = set(data.get("languages") or [])
+    if code in selected:
+        selected.discard(code)
     else:
-        selected.append(text)
-    await state.update_data(languages=selected)
-    await message.answer(_t(lang, "ask_languages"), reply_markup=kb.get_languages_keyboard(lang))
+        selected.add(code)
+    await state.update_data(languages=list(selected))
+    with suppress(TelegramAPIError):
+        await callback.message.edit_reply_markup(
+            reply_markup=kb.get_languages_keyboard(lang, selected)
+        )
+
 
 async def _ask_position_after_languages(
     message: Message, state: FSMContext, session: AsyncSession, lang: str,
@@ -89,7 +105,35 @@ async def _ask_position_after_languages(
     )
 
 
-# ─── 2. Готовность к работе (Inline CallbackQuery) ───────────────────────────
+# ─── 2. Выбор вакансии (Inline) ───────────────────────────────────────────────
+
+@router.callback_query(Form.waiting_position, F.data.startswith("position:"))
+async def handle_position(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    await callback.answer()
+    data = await state.get_data()
+    lang = _lang(data)
+    vacancy_id_str = callback.data.split(":")[1]
+    try:
+        vacancy_id = int(vacancy_id_str)
+    except ValueError:
+        return
+    vacancy = await db.get_vacancy_by_id(session, vacancy_id)
+    if not vacancy:
+        return
+    name_key = "name_ru" if lang == "ru" else "name_uz"
+    position_label = f"{vacancy.get('emoji', '')} {vacancy.get(name_key, '')}".strip()
+    await state.update_data(position=position_label)
+    with suppress(TelegramAPIError):
+        await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(
+        LOCALIZATION[lang]["ask_readiness"],
+        reply_markup=kb.get_readiness_inline_keyboard(lang),
+        parse_mode="HTML",
+    )
+    await state.set_state(Form.waiting_readiness)
+
+
+# ─── 3. Готовность к работе (Inline CallbackQuery) ───────────────────────────
 
 @router.callback_query(Form.waiting_readiness, F.data.startswith("readiness:"))
 async def handle_readiness(callback: CallbackQuery, state: FSMContext) -> None:
@@ -109,33 +153,34 @@ async def handle_readiness(callback: CallbackQuery, state: FSMContext) -> None:
     logger.info("handle_readiness: user_id=%d readiness=%r", callback.from_user.id, value)
 
 
-# ─── 3. Опыт работы — ветвление Да / Нет ─────────────────────────────────────
+# ─── 4. Опыт работы — ветвление Да / Нет (Inline) ────────────────────────────
 
-@router.message(Form.waiting_experience)
-async def handle_experience_yn(message: Message, state: FSMContext) -> None:
+@router.callback_query(Form.waiting_experience, F.data.startswith("experience:"))
+async def handle_experience_yn(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
     data = await state.get_data()
     lang = _lang(data)
-    text = (message.text or "").strip()
+    choice = callback.data.split(":")[1]
+    with suppress(TelegramAPIError):
+        await callback.message.edit_reply_markup(reply_markup=None)
 
-    if text == _t(lang, "exp_no"):
+    if choice == "no":
         await state.update_data(
             experience=_t(lang, "exp_no", "Нет"),
             exp_company=None, exp_position=None,
             exp_duration=None, exp_duties=None,
         )
-        await _ask_salary(message, state, lang)
-    elif text == _t(lang, "exp_yes"):
+        await _ask_salary(callback.message, state, lang)
+    else:
         await state.update_data(experience=_t(lang, "exp_yes", "Да"))
         await state.set_state(Form.waiting_exp_company)
-        await message.answer(
+        await callback.message.answer(
             _t(lang, "ask_exp_company"),
             reply_markup=kb.get_cancel_keyboard(lang),
         )
-    else:
-        await message.answer(_t(lang, "ask_experience_yn"), reply_markup=kb.get_experience_yn_keyboard(lang))
 
 
-# ─── 4. Под-шаги опыта ────────────────────────────────────────────────────────
+# ─── 5. Под-шаги опыта (текст) ────────────────────────────────────────────────
 
 @router.message(Form.waiting_exp_company)
 async def handle_exp_company(message: Message, state: FSMContext) -> None:
@@ -172,7 +217,7 @@ async def handle_exp_duties(message: Message, state: FSMContext) -> None:
     await _ask_salary(message, state, lang)
 
 
-# ─── 5. Зарплатные ожидания ───────────────────────────────────────────────────
+# ─── 6. Зарплатные ожидания (текст) ──────────────────────────────────────────
 
 async def _ask_salary(message: Message, state: FSMContext, lang: str) -> None:
     await state.set_state(Form.waiting_salary)
@@ -195,104 +240,103 @@ async def handle_salary(message: Message, state: FSMContext) -> None:
     )
 
 
-# ─── 6. График работы ─────────────────────────────────────────────────────────
+# ─── 7. График работы (Inline) ────────────────────────────────────────────────
 
-@router.message(Form.waiting_schedule)
-async def handle_schedule(message: Message, state: FSMContext) -> None:
+@router.callback_query(Form.waiting_schedule, F.data.startswith("schedule:"))
+async def handle_schedule(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
     data = await state.get_data()
     lang = _lang(data)
-    text = (message.text or "").strip()
-    valid = {_t(lang, key) for key in ("schedule_6_1", "schedule_5_2", "schedule_3_1", "schedule_2_2", "schedule_full", "schedule_flex", "schedule_any")}
-    valid.add(_skip_text(lang))
-    if text not in valid:
-        await message.answer(_t(lang, "ask_schedule"), reply_markup=kb.get_schedule_keyboard(lang))
-        return
-    await state.update_data(schedule=None if text == _skip_text(lang) else text)
+    key = callback.data.split(":")[1]
+    value = None if key == "skip" else _t(lang, f"schedule_{key}", key)
+    await state.update_data(schedule=value)
+    with suppress(TelegramAPIError):
+        await callback.message.edit_reply_markup(reply_markup=None)
     await state.set_state(Form.waiting_evening_shifts)
-    await message.answer(
+    await callback.message.answer(
         _t(lang, "ask_evening_shifts"),
         reply_markup=kb.get_evening_shifts_keyboard(lang),
     )
 
 
-# ─── 7. Вечерние смены ────────────────────────────────────────────────────────
+# ─── 8. Вечерние смены (Inline) ──────────────────────────────────────────────
 
-@router.message(Form.waiting_evening_shifts)
-async def handle_evening_shifts(message: Message, state: FSMContext) -> None:
+@router.callback_query(Form.waiting_evening_shifts, F.data.startswith("evening:"))
+async def handle_evening_shifts(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
     data = await state.get_data()
     lang = _lang(data)
-    text = (message.text or "").strip()
-    valid = {_t(lang, "evening_yes"), _t(lang, "evening_no"), _t(lang, "evening_agreement"), _skip_text(lang)}
-    if text not in valid:
-        await message.answer(_t(lang, "ask_evening_shifts"), reply_markup=kb.get_evening_shifts_keyboard(lang))
-        return
-    await state.update_data(evening_shifts=None if text == _skip_text(lang) else text)
+    key = callback.data.split(":")[1]
+    value = None if key == "skip" else _t(lang, f"evening_{key}", key)
+    await state.update_data(evening_shifts=value)
+    with suppress(TelegramAPIError):
+        await callback.message.edit_reply_markup(reply_markup=None)
     await state.set_state(Form.waiting_weekends)
-    await message.answer(
+    await callback.message.answer(
         _t(lang, "ask_weekends"),
         reply_markup=kb.get_weekends_keyboard(lang),
     )
 
 
-# ─── 8. Выходные и праздники ──────────────────────────────────────────────────
+# ─── 9. Выходные и праздники (Inline) ────────────────────────────────────────
 
-@router.message(Form.waiting_weekends)
-async def handle_weekends(message: Message, state: FSMContext) -> None:
+@router.callback_query(Form.waiting_weekends, F.data.startswith("weekends:"))
+async def handle_weekends(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
     data = await state.get_data()
     lang = _lang(data)
-    text = (message.text or "").strip()
-    valid = {_t(lang, "weekends_yes"), _t(lang, "weekends_no"), _t(lang, "weekends_sometimes"), _skip_text(lang)}
-    if text not in valid:
-        await message.answer(_t(lang, "ask_weekends"), reply_markup=kb.get_weekends_keyboard(lang))
-        return
-    await state.update_data(weekends=None if text == _skip_text(lang) else text)
+    key = callback.data.split(":")[1]
+    value = None if key == "skip" else _t(lang, f"weekends_{key}", key)
+    await state.update_data(weekends=value)
+    with suppress(TelegramAPIError):
+        await callback.message.edit_reply_markup(reply_markup=None)
     await state.set_state(Form.waiting_smoking)
-    await message.answer(
+    await callback.message.answer(
         _t(lang, "ask_smoking"),
         reply_markup=kb.get_smoking_keyboard(lang),
     )
 
 
-# ─── 9. Курение ───────────────────────────────────────────────────────────────
+# ─── 10. Курение (Inline) ─────────────────────────────────────────────────────
 
-@router.message(Form.waiting_smoking)
-async def handle_smoking(message: Message, state: FSMContext) -> None:
+@router.callback_query(Form.waiting_smoking, F.data.startswith("smoking:"))
+async def handle_smoking(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
     data = await state.get_data()
     lang = _lang(data)
-    text = (message.text or "").strip()
-    valid = {_t(lang, "smoking_no"), _t(lang, "smoking_yes"), _skip_text(lang)}
-    if text not in valid:
-        await message.answer(_t(lang, "ask_smoking"), reply_markup=kb.get_smoking_keyboard(lang))
-        return
-    await state.update_data(smoking=None if text == _skip_text(lang) else text)
+    key = callback.data.split(":")[1]
+    value = None if key == "skip" else _t(lang, f"smoking_{key}", key)
+    await state.update_data(smoking=value)
+    with suppress(TelegramAPIError):
+        await callback.message.edit_reply_markup(reply_markup=None)
     await state.set_state(Form.waiting_med_book)
-    await message.answer(
+    await callback.message.answer(
         _t(lang, "ask_med_book"),
         reply_markup=kb.get_med_book_keyboard(lang),
     )
 
 
-# ─── 10. Медицинская книжка ───────────────────────────────────────────────────
+# ─── 11. Медицинская книжка (Inline) ─────────────────────────────────────────
 
-@router.message(Form.waiting_med_book)
-async def handle_med_book(message: Message, state: FSMContext) -> None:
+@router.callback_query(Form.waiting_med_book, F.data.startswith("med_book:"))
+async def handle_med_book(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
     data = await state.get_data()
     lang = _lang(data)
-    text = (message.text or "").strip()
-    valid = {_t(lang, "med_book_yes"), _t(lang, "med_book_no"), _t(lang, "med_book_in_progress"), _skip_text(lang)}
-    if text not in valid:
-        await message.answer(_t(lang, "ask_med_book"), reply_markup=kb.get_med_book_keyboard(lang))
-        return
-    await state.update_data(med_book=None if text == _skip_text(lang) else text)
+    key = callback.data.split(":")[1]
+    value = None if key == "skip" else _t(lang, f"med_book_{key}", key)
+    await state.update_data(med_book=value)
+    with suppress(TelegramAPIError):
+        await callback.message.edit_reply_markup(reply_markup=None)
     await state.set_state(Form.waiting_photo)
-    await message.answer(
+    await callback.message.answer(
         _t(lang, "ask_photo"),
         reply_markup=kb.get_skip_cancel_keyboard(lang),
         parse_mode="HTML",
     )
 
 
-# ─── 11. Фото кандидата ───────────────────────────────────────────────────────
+# ─── 12. Фото кандидата (обычное сообщение) ──────────────────────────────────
 
 @router.message(Form.waiting_photo)
 async def handle_photo(message: Message, state: FSMContext) -> None:
