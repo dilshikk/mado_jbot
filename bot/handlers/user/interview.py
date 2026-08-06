@@ -15,7 +15,7 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.ai.agents import run_all_agents
-from bot.ai.interview import get_next_step
+from bot.ai.interview import get_next_step, HARD_MAX_QUESTIONS
 from bot.core.config import ADMIN_CHAT_ID
 from bot.db import requests as db
 from bot.filters.common import IsPrivateChat
@@ -28,10 +28,11 @@ router = Router()
 router.message.filter(IsPrivateChat())
 
 logger = logging.getLogger(__name__)
-MIN_QUESTIONS = 5
 
-# Длительность таймаута send_chat_action — 5с.
-# Мы обновляем его каждые _TYPING_INTERVAL секунды.
+# Минимальное число вопросов до того, как принять решение AI о завершении.
+# Защищает от случайного раннего done= true из-за сбоя модели.
+MIN_QUESTIONS = 4
+
 _TYPING_INTERVAL = 4
 
 _SKIP_KB_RU = InlineKeyboardMarkup(inline_keyboard=[[
@@ -51,7 +52,6 @@ def _now() -> str:
 
 
 async def _typing_loop(chat_id: int, bot, stop: asyncio.Event) -> None:
-    """Луп обновления chat_action=typing до установки stop."""
     try:
         while not stop.is_set():
             await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
@@ -69,7 +69,6 @@ async def _get_next_step_with_typing(
     qa_log: list[dict],
     lang: str,
 ) -> dict:
-    """Вызывает get_next_step с параллельным показом анимации «печатает»."""
     stop = asyncio.Event()
     task = asyncio.create_task(_typing_loop(chat_id, bot, stop))
     try:
@@ -88,15 +87,11 @@ async def _send_combined_hr_card(
     lang: str,
     user,
 ) -> None:
-    """Отправляет в HR-чат объединённую карточку: анкета + AI-анализ.
-
-    Вызывается только после завершения AI-пайплайна.
-    """
+    """Отправляет в HR-чат объединённую карточку: анкета + AI-анализ."""
     if not ADMIN_CHAT_ID:
         return
 
     interview = await db.get_interview_session(session, session_id)
-    app = await db.get_latest_application(session, user_id)
 
     # ── Блок 1: анкета ────────────────────────────────────────────────────────
     resume_block = build_hr_resume_text(form_data, lang, user)
@@ -139,7 +134,6 @@ async def _send_combined_hr_card(
     if len(full_text) > 4096:
         full_text = full_text[:4080] + "\n…(обрезано)"
 
-    # ── Отправка с кнопками HR-действий ──────────────────────────────────────
     hr_kb = kb.get_hr_action_keyboard(
         phone=form_data.get("phone", ""),
         username=getattr(user, "username", "") or "",
@@ -178,7 +172,6 @@ async def start_interview(
     user_id    = message.from_user.id
     session_id = await db.create_interview_session(session, user_id)
 
-    # Показываем анимацию «печатает» пока AI генерирует первый вопрос
     step = await _get_next_step_with_typing(
         message.chat.id, message.bot, form_data, [], lang,
     )
@@ -191,6 +184,7 @@ async def start_interview(
         return
 
     question = step["question"]
+    topic    = step.get("topic", "")
     await db.update_interview_session(session, session_id, q_count=1)
     await db.update_application_status(session, user_id, "interview_in_progress")
 
@@ -201,8 +195,8 @@ async def start_interview(
         interview_lang=lang,
         interview_qa_log=[],
         interview_current_q=question,
+        interview_current_topic=topic,
         interview_asked_questions=[question.casefold()],
-        # сохраняем user для передачи в _finish_interview
         interview_user_id=message.from_user.id,
         interview_username=message.from_user.username,
         interview_first_name=message.from_user.first_name,
@@ -225,24 +219,34 @@ async def process_answer(message: Message, state: FSMContext, session: AsyncSess
     lang            = data.get("interview_lang", "ru")
     qa_log          = data.get("interview_qa_log", [])
     current_q       = data.get("interview_current_q", "")
+    current_topic   = data.get("interview_current_topic", "")
     asked_questions = data.get("interview_asked_questions", [])
 
-    qa_log.append({"q": current_q, "a": (message.text or "").strip()})
+    # Сохраняем ответ вместе с темой — модель использует topic для трекинга компетенций
+    qa_log.append({"q": current_q, "a": (message.text or "").strip(), "topic": current_topic})
     await db.append_qa(session, session_id, qa_log)
 
     step     = await _get_next_step_with_typing(message.chat.id, message.bot, form_data, qa_log, lang)
     question = (step.get("question") or "").strip()
 
-    if len(qa_log) >= MIN_QUESTIONS and (step.get("done") or not question):
-        await _finish_interview(message, state, session, session_id, form_data, lang)
+    # Завершаем только если AI сказал done=true И задано хотя бы MIN_QUESTIONS
+    if step.get("done") and len(qa_log) >= MIN_QUESTIONS:
+        await _finish_interview(message, state, session, session_id, form_data, lang, qa_log)
+        return
+    # Абсолютный лимит
+    if len(qa_log) >= HARD_MAX_QUESTIONS:
+        await _finish_interview(message, state, session, session_id, form_data, lang, qa_log)
         return
 
+    topic = step.get("topic", "")
     if not question:
         question = _fallback_question(lang, qa_log, asked_questions)
+        topic = ""
     else:
         normalized = question.casefold()
         if normalized in asked_questions:
             question = _fallback_question(lang, qa_log, asked_questions)
+            topic = ""
         else:
             asked_questions.append(normalized)
 
@@ -250,6 +254,7 @@ async def process_answer(message: Message, state: FSMContext, session: AsyncSess
     await state.update_data(
         interview_qa_log=qa_log,
         interview_current_q=question,
+        interview_current_topic=topic,
         interview_asked_questions=asked_questions,
     )
     await message.answer(f"🤖 {question} ", parse_mode="HTML", reply_markup=_skip_kb(lang))
@@ -265,25 +270,32 @@ async def skip_question(callback: CallbackQuery, state: FSMContext, session: Asy
     lang            = data.get("interview_lang", "ru")
     qa_log          = data.get("interview_qa_log", [])
     current_q       = data.get("interview_current_q", "")
+    current_topic   = data.get("interview_current_topic", "")
     asked_questions = data.get("interview_asked_questions", [])
 
     skip_text = "— (пропущен)" if lang == "ru" else "— (o'tkazildi)"
-    qa_log.append({"q": current_q, "a": skip_text})
+    qa_log.append({"q": current_q, "a": skip_text, "topic": current_topic})
     await db.append_qa(session, session_id, qa_log)
 
     step     = await _get_next_step_with_typing(callback.message.chat.id, callback.bot, form_data, qa_log, lang)
     question = (step.get("question") or "").strip()
 
-    if len(qa_log) >= MIN_QUESTIONS and (step.get("done") or not question):
-        await _finish_interview(callback.message, state, session, session_id, form_data, lang)
+    if step.get("done") and len(qa_log) >= MIN_QUESTIONS:
+        await _finish_interview(callback.message, state, session, session_id, form_data, lang, qa_log)
+        return
+    if len(qa_log) >= HARD_MAX_QUESTIONS:
+        await _finish_interview(callback.message, state, session, session_id, form_data, lang, qa_log)
         return
 
+    topic = step.get("topic", "")
     if not question:
         question = _fallback_question(lang, qa_log, asked_questions)
+        topic = ""
     else:
         normalized = question.casefold()
         if normalized in asked_questions:
             question = _fallback_question(lang, qa_log, asked_questions)
+            topic = ""
         else:
             asked_questions.append(normalized)
 
@@ -291,6 +303,7 @@ async def skip_question(callback: CallbackQuery, state: FSMContext, session: Asy
     await state.update_data(
         interview_qa_log=qa_log,
         interview_current_q=question,
+        interview_current_topic=topic,
         interview_asked_questions=asked_questions,
     )
     await callback.message.answer(f"🤖 {question} ", parse_mode="HTML", reply_markup=_skip_kb(lang))
@@ -317,17 +330,15 @@ async def _finish_interview(
     qa_log: list[dict] | None = None,
     user=None,
 ) -> None:
-    """Завершает интервью: запускает AI-пайплайн, затем отправляет в HR объединённую карточку."""
+    """Завершает интервью: запускает AI-пайплайн, отправляет объединённую карточку в HR."""
     if qa_log is None:
         qa_log = []
 
-    # Восстанавливаем user из FSM, если не передан явно
     if user is None:
         user = message.from_user
 
-    # Получаем данные из FSM до очистки
     fsm_data = await state.get_data()
-    if form_data is None or not form_data:
+    if not form_data:
         form_data = fsm_data.get("interview_form_data", {})
     if not lang:
         lang = fsm_data.get("interview_lang", "ru")
@@ -343,11 +354,9 @@ async def _finish_interview(
 
     user_id = user.id if user else (message.from_user.id if message.from_user else message.chat.id)
 
-    # ── АТОМАРНОСТЬ: проверка + run_all_agents внутри interview_lock ──────────
     async with interview_lock(session_id):
         existing = await db.get_interview_session(session, session_id)
         if existing and existing.get("report_decision"):
-            # Отчёт уже готов (повторный вызов) — просто шлём карточку
             logger.info(
                 "_finish_interview: отчёт уже есть для session_id=%d user_id=%d",
                 session_id, user_id,
@@ -357,7 +366,6 @@ async def _finish_interview(
             )
             return
 
-        # Уведомляем HR что AI обрабатывает данные
         if ADMIN_CHAT_ID:
             try:
                 app  = await db.get_latest_application(session, user_id)
@@ -396,13 +404,13 @@ async def _finish_interview(
         )
         await db.update_application_status(session, user_id, "screened")
 
-    # Отправляем объединённую карточку (анкета + AI-анализ) в HR-чат
     await _send_combined_hr_card(
         message.bot, session, session_id, user_id, form_data, lang, user,
     )
 
 
 def _fallback_question(lang: str, qa_log: list[dict], asked_questions: list[str]) -> str:
+    """Резервные вопросы на случай сбоя модели."""
     pool_ru = [
         "Почему вы хотите работать в MADO?",
         "Расскажите о вашем опыте работы с гостями.",
