@@ -292,11 +292,6 @@ def remove_keyboard() -> ReplyKeyboardRemove:
 
 # ── Административные клавиатуры ───────────────────────────────────────────────
 #
-# Правило: каждый «экран» администратора имеет свою Reply Keyboard.
-# Переход между экранами всегда заменяет клавиатуру.
-# «⬅️ Назад» / «❌ Отмена» — всегда возврат в главное меню /admin.
-# Под-навигация (к вакансиям, к линиям и т.д.) использует отдельные тексты кнопок.
-
 # Кнопки навигации (текстовые константы для единообразия)
 ADMIN_BTN_BACK   = "⬅️ Назад"
 ADMIN_BTN_CANCEL = "❌ Отмена"
@@ -361,62 +356,6 @@ def get_broadcast_preview_kb() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="✏️ Изменить фото"),  KeyboardButton(text="✏️ Изменить текст")],
             [KeyboardButton(text="✏️ Изменить ссылку")],
             [KeyboardButton(text=ADMIN_BTN_CANCEL)],
-        ],
-        resize_keyboard=True,
-    )
-
-# ── Вакансии ──────────────────────────────────────────────────────────────────
-
-def _vacancy_label(v: dict) -> str:
-    """Текст кнопки вакансии: статус + эмодзи + название."""
-    status = "✅" if v["is_active"] else "❌"
-    parts  = [status]
-    if v.get("emoji"):
-        parts.append(v["emoji"])
-    parts.append(v["name_ru"])
-    return " ".join(parts)
-
-def get_admin_vacancies_kb(vacancies: list[dict]) -> ReplyKeyboardMarkup:
-    """Главный экран раздела «Вакансии»: список как кнопки + действия."""
-    keyboard: list[list[KeyboardButton]] = []
-    row: list[KeyboardButton] = []
-    for v in vacancies:
-        row.append(KeyboardButton(text=_vacancy_label(v)))
-        if len(row) == 2:
-            keyboard.append(row)
-            row = []
-    if row:
-        keyboard.append(row)
-    keyboard.append([KeyboardButton(text="➕ Добавить вакансию")])
-    keyboard.append([KeyboardButton(text="🔄 Обновить"), KeyboardButton(text=ADMIN_BTN_BACK)])
-    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
-
-def get_admin_vacancy_item_kb(is_active: bool) -> ReplyKeyboardMarkup:
-    """Экран отдельной вакансии: действия."""
-    toggle = "❌ Выключить" if is_active else "✅ Включить"
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=toggle)],
-            [KeyboardButton(text="✏️ Изменить"), KeyboardButton(text="🗑 Удалить")],
-            [KeyboardButton(text="◀️ К вакансиям")],
-        ],
-        resize_keyboard=True,
-    )
-
-def get_admin_vacancy_confirm_delete_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="✅ Да, удалить"), KeyboardButton(text="◀️ К вакансиям")],
-        ],
-        resize_keyboard=True,
-    )
-
-def get_admin_vacancy_edit_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🇷🇺 Название (рус)"), KeyboardButton(text="🇺🇿 Название (узб)")],
-            [KeyboardButton(text="😊 Эмодзи")],
-            [KeyboardButton(text="◀️ К вакансиям")],
         ],
         resize_keyboard=True,
     )
