@@ -65,7 +65,6 @@ _RECAP: dict[str, dict[str, str]] = {
 }
 
 def _recap(lang: str, field: str, value: str | None) -> str | None:
-    """Возвращает строку подтверждения выбора или None если значение пусто."""
     if not value:
         return None
     label = _RECAP.get(lang, _RECAP["ru"]).get(field, field)
@@ -140,7 +139,6 @@ async def process_name(message: Message, state: FSMContext, lang: str) -> None:
         await message.answer(LOCALIZATION[lang].get("bad_name", "Введите корректное ФИО."), parse_mode="HTML")
         return
     await state.update_data(name=text)
-    # Recap
     if recap := _recap(lang, "name", text):
         await message.answer(recap, parse_mode="HTML")
     await message.answer(LOCALIZATION[lang]["ask_birthday"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
@@ -168,10 +166,8 @@ async def process_birthday(message: Message, state: FSMContext, lang: str) -> No
         )
         return
     await state.update_data(birthday=text)
-    # Recap
     if recap := _recap(lang, "birthday", text):
         await message.answer(recap, parse_mode="HTML")
-    # Убираем reply-клавиатуру и показываем inline-кнопки для пола
     with suppress(TelegramAPIError):
         stub = await message.answer("👤", reply_markup=kb.remove_keyboard())
     with suppress(TelegramAPIError):
@@ -188,13 +184,13 @@ async def process_birthday(message: Message, state: FSMContext, lang: str) -> No
 
 @router.callback_query(Form.waiting_gender, F.data.startswith("gender:"))
 async def process_gender(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
-    await callback.answer()
+    with suppress(TelegramAPIError):
+        await callback.answer()
     choice = callback.data.split(":")[1]
     gender_text = LOCALIZATION[lang]["gender_male"] if choice == "male" else LOCALIZATION[lang]["gender_female"]
     await state.update_data(gender=gender_text)
     with suppress(TelegramAPIError):
         await callback.message.edit_reply_markup(reply_markup=None)
-    # Recap
     if recap := _recap(lang, "gender", gender_text):
         await callback.message.answer(recap, parse_mode="HTML")
     await callback.message.answer(
@@ -217,7 +213,6 @@ async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
         )
         return
     await state.update_data(phone=phone)
-    # Recap
     if recap := _recap(lang, "phone", phone):
         await message.answer(recap, parse_mode="HTML")
     from bot.handlers.user.metro import ask_metro  # noqa: PLC0415
@@ -265,8 +260,12 @@ async def process_confirmation_callback(
     state: FSMContext,
     lang: str,
     session: AsyncSession,
+    bot: Bot,
 ) -> None:
-    await callback.answer()
+    # Отвечаем на callback сразу — до любых await, чтобы не истёк таймаут
+    with suppress(TelegramAPIError):
+        await callback.answer()
+
     choice = callback.data.split(":")[1]
 
     if choice == "no":
@@ -292,9 +291,9 @@ async def process_confirmation_callback(
                 block_text = LOCALIZATION[lang].get(key) or LOCALIZATION[lang]["anketa_block_pending"]
                 await callback.message.answer(block_text, parse_mode="HTML")
                 return
-            await _do_save_application(callback.message, state, session, lang, data, user)
+            await _do_save_application(callback.message, state, session, lang, data, user, bot)
     else:
-        await _do_save_application(callback.message, state, session, lang, data, user)
+        await _do_save_application(callback.message, state, session, lang, data, user, bot)
 
 
 async def _do_save_application(
@@ -304,7 +303,7 @@ async def _do_save_application(
     lang: str,
     data: dict,
     user,
-    bot: Bot | None = None,
+    bot: Bot,
 ) -> None:
     app_id = await db.save_application(
         session,
@@ -347,7 +346,7 @@ async def _do_save_application(
         parse_mode="HTML",
     )
 
-    if not ADMIN_CHAT_ID or not bot:
+    if not ADMIN_CHAT_ID:
         return
 
     resume_text = build_hr_resume_text(data, lang, user)
