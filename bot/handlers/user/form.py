@@ -59,6 +59,25 @@ def _valid_position_labels(vacancies: list[dict]) -> set[str]:
     return labels
 
 
+def _is_valid_full_name(text: str) -> bool:
+    """Проверяет ФИО: минимум два слова, без цифр и служебных символов.
+
+    Отсекает случаи, когда кандидат копирует текст подсказки
+    (например «ФИО полностью:») вместо своего имени.
+    """
+    if len(text) < 5 or len(text) > 100:
+        return False
+    if any(ch.isdigit() for ch in text):
+        return False
+    if any(ch in text for ch in ":;/\\_@#*<>"):
+        return False
+    words = [w for w in re.split(r"[\s\-]+", text) if w]
+    if len(words) < 2:
+        return False
+    # Каждое слово — минимум 2 буквы
+    return all(len(w) >= 2 and all(ch.isalpha() or ch in "'’." for ch in w) for w in words)
+
+
 @router.message(StateFilter(*_FORM_ACTIVE_STATES), IsCancelMessage())
 @router.message(StateFilter(*_FORM_ACTIVE_STATES), Command("cancel"))
 async def cancel_form(message: Message, state: FSMContext, lang: str) -> None:
@@ -101,8 +120,13 @@ async def start_anketa(message: Message, state: FSMContext, lang: str, session: 
 @router.message(Form.waiting_name)
 async def process_name(message: Message, state: FSMContext, lang: str) -> None:
     text = (message.text or "").strip()
-    if len(text) < 3 or any(ch.isdigit() for ch in text):
-        await message.answer(LOCALIZATION[lang].get("bad_name", "Введите корректное ФИО."), parse_mode="HTML")
+    if not _is_valid_full_name(text):
+        hint = (
+            "❌ Введите ваше настоящее ФИО полностью, например: <b>Иванов Иван Иванович</b>"
+            if lang == "ru" else
+            "❌ To'liq ism-familiyangizni kiriting, masalan: <b>Aliyev Ali Alievich</b>"
+        )
+        await message.answer(LOCALIZATION[lang].get("bad_name") or hint, parse_mode="HTML")
         return
     await state.update_data(name=text)
     await message.answer(LOCALIZATION[lang]["ask_birthday"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
@@ -242,7 +266,7 @@ async def _do_save_application(
     data: dict,
     user,
 ) -> None:
-    """Сохраняет анкету в БД, отправляет HR и благодарит кандидата."""
+    """Сохраняет анкету в БД, отправляет HR, затем запускает AI-интервью."""
     bot: Bot = message.bot
 
     # Реальная сигнатура: save_application(session, user_id, name, birthday, phone, position, experience)
@@ -259,9 +283,28 @@ async def _do_save_application(
     confirm_text = LOCALIZATION[lang]["anketa_confirmed"]
     await state.clear()
     await state.update_data(lang=lang)
-    await message.answer(confirm_text, reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
+    # Убираем reply-клавиатуру: во время интервью используются inline-кнопки,
+    # иначе нажатие кнопки меню будет воспринято как ответ на вопрос AI.
+    await message.answer(confirm_text, reply_markup=kb.remove_keyboard(), parse_mode="HTML")
 
+    # HR-сообщение, Google Sheets и предварительный AI-скрининг — в фоне,
+    # чтобы кандидат не ждал перед первым вопросом интервью.
     asyncio.create_task(_post_confirm_tasks(bot, session, user, data, application_id, lang))
+
+    # ── Запуск AI-интервью ──
+    from bot.handlers.user.interview import start_interview  # noqa: PLC0415
+    try:
+        await start_interview(message, state, session, data, lang)
+    except Exception as e:
+        logger.error("Не удалось запустить AI-интервью: %s", e, exc_info=True)
+        await state.clear()
+        await state.update_data(lang=lang)
+        fallback = (
+            "Ваша анкета принята. HR-менеджер свяжется с вами в ближайшее время."
+            if lang == "ru" else
+            "Anketangiz qabul qilindi. HR-menejer tez orada siz bilan bog'lanadi."
+        )
+        await message.answer(fallback, reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
 
 
 async def _post_confirm_tasks(
