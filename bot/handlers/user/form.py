@@ -33,10 +33,8 @@ logger = logging.getLogger(__name__)
 MIN_VIDEO_DURATION = 15
 VALID_BRANCH = "Tashkent City Mall"
 
-# Статусы, при которых повторная подача анкеты запрещена (защита от дублей)
 BLOCKING_STATUSES = {"pending", "accepted", "hired", "hold"}
 
-# Все активные шаги анкеты (waiting_for_lang исключён — там своя логика)
 _FORM_ACTIVE_STATES = (
     Form.waiting_name, Form.waiting_birthday, Form.waiting_gender,
     Form.waiting_phone, Form.waiting_metro,
@@ -49,23 +47,45 @@ _FORM_ACTIVE_STATES = (
     Form.waiting_photo, Form.waiting_video, Form.waiting_confirmation,
 )
 
+# ─── Recap labels ─────────────────────────────────────────────────────────────
+
+_RECAP: dict[str, dict[str, str]] = {
+    "ru": {
+        "name":     "👤 ФИО",
+        "birthday": "🎂 Дата рождения",
+        "gender":   "⚧ Пол",
+        "phone":    "📱 Телефон",
+    },
+    "uz": {
+        "name":     "👤 FIO",
+        "birthday": "🎂 Tug'ilgan kun",
+        "gender":   "⚧ Jins",
+        "phone":    "📱 Telefon",
+    },
+}
+
+def _recap(lang: str, field: str, value: str | None) -> str | None:
+    """Возвращает строку подтверждения выбора или None если значение пусто."""
+    if not value:
+        return None
+    label = _RECAP.get(lang, _RECAP["ru"]).get(field, field)
+    return f"{label}: <b>{value}</b>"
+
 
 # ─── Отмена анкеты — Message ──────────────────────────────────────────────────
 
 @router.message(StateFilter(*_FORM_ACTIVE_STATES), IsCancelMessage())
 @router.message(StateFilter(*_FORM_ACTIVE_STATES), Command("cancel"))
 async def cancel_form(message: Message, state: FSMContext, lang: str) -> None:
-    """Отмена анкеты на любом шаге — кнопкой или командой /cancel."""
     await state.clear()
     await state.update_data(lang=lang)
     await message.answer(LOCALIZATION[lang]["anketa_cancelled"], reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
 
 
-# ─── Отмена анкеты — Callback (inline-кнопки) ────────────────────────────────
+# ─── Отмена анкеты — Callback ─────────────────────────────────────────────────
 
 @router.callback_query(StateFilter(*_FORM_ACTIVE_STATES), F.data == "form_cancel")
 async def cancel_form_callback(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
-    """Отмена анкеты с inline-кнопки «Отменить заполнение»."""
     await state.clear()
     await state.update_data(lang=lang)
     with suppress(TelegramAPIError):
@@ -111,6 +131,8 @@ async def start_anketa(message: Message, state: FSMContext, lang: str, session: 
     await state.set_state(Form.waiting_name)
 
 
+# ─── Шаг 1: Имя ───────────────────────────────────────────────────────────────
+
 @router.message(Form.waiting_name)
 async def process_name(message: Message, state: FSMContext, lang: str) -> None:
     text = (message.text or "").strip()
@@ -118,9 +140,14 @@ async def process_name(message: Message, state: FSMContext, lang: str) -> None:
         await message.answer(LOCALIZATION[lang].get("bad_name", "Введите корректное ФИО."), parse_mode="HTML")
         return
     await state.update_data(name=text)
+    # Recap
+    if recap := _recap(lang, "name", text):
+        await message.answer(recap, parse_mode="HTML")
     await message.answer(LOCALIZATION[lang]["ask_birthday"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_birthday)
 
+
+# ─── Шаг 2: Дата рождения ─────────────────────────────────────────────────────
 
 @router.message(Form.waiting_birthday)
 async def process_birthday(message: Message, state: FSMContext, lang: str) -> None:
@@ -141,6 +168,9 @@ async def process_birthday(message: Message, state: FSMContext, lang: str) -> No
         )
         return
     await state.update_data(birthday=text)
+    # Recap
+    if recap := _recap(lang, "birthday", text):
+        await message.answer(recap, parse_mode="HTML")
     # Убираем reply-клавиатуру и показываем inline-кнопки для пола
     with suppress(TelegramAPIError):
         stub = await message.answer("👤", reply_markup=kb.remove_keyboard())
@@ -154,7 +184,7 @@ async def process_birthday(message: Message, state: FSMContext, lang: str) -> No
     await state.set_state(Form.waiting_gender)
 
 
-# ─── Пол (Inline) ─────────────────────────────────────────────────────────────
+# ─── Шаг 3: Пол (Inline) ──────────────────────────────────────────────────────
 
 @router.callback_query(Form.waiting_gender, F.data.startswith("gender:"))
 async def process_gender(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
@@ -164,6 +194,9 @@ async def process_gender(callback: CallbackQuery, state: FSMContext, lang: str) 
     await state.update_data(gender=gender_text)
     with suppress(TelegramAPIError):
         await callback.message.edit_reply_markup(reply_markup=None)
+    # Recap
+    if recap := _recap(lang, "gender", gender_text):
+        await callback.message.answer(recap, parse_mode="HTML")
     await callback.message.answer(
         LOCALIZATION[lang]["ask_phone"],
         reply_markup=kb.get_phone_keyboard(lang),
@@ -171,6 +204,8 @@ async def process_gender(callback: CallbackQuery, state: FSMContext, lang: str) 
     )
     await state.set_state(Form.waiting_phone)
 
+
+# ─── Шаг 4: Телефон ───────────────────────────────────────────────────────────
 
 @router.message(Form.waiting_phone)
 async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
@@ -182,10 +217,14 @@ async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
         )
         return
     await state.update_data(phone=phone)
-    # Переход к выбору метро (inline) через metro.py
+    # Recap
+    if recap := _recap(lang, "phone", phone):
+        await message.answer(recap, parse_mode="HTML")
     from bot.handlers.user.metro import ask_metro  # noqa: PLC0415
     await ask_metro(message, state, lang)
 
+
+# ─── Шаг N: Видео ─────────────────────────────────────────────────────────────
 
 @router.message(Form.waiting_video)
 async def process_video(message: Message, state: FSMContext, lang: str) -> None:
@@ -210,7 +249,6 @@ async def process_video(message: Message, state: FSMContext, lang: str) -> None:
         await state.update_data(video_file_id=file_id, is_video_note=is_note, video_duration=duration)
     data = await state.get_data()
     summary = build_resume_text(data, lang)
-    # Показываем подтверждение через inline-клавиатуру
     with suppress(TelegramAPIError):
         stub = await message.answer("📋", reply_markup=kb.remove_keyboard())
     with suppress(TelegramAPIError):
@@ -219,7 +257,7 @@ async def process_video(message: Message, state: FSMContext, lang: str) -> None:
     await state.set_state(Form.waiting_confirmation)
 
 
-# ─── Подтверждение анкеты (Inline) ────────────────────────────────────────────
+# ─── Подтверждение (Inline) ───────────────────────────────────────────────────
 
 @router.callback_query(Form.waiting_confirmation, F.data.startswith("confirm:"))
 async def process_confirmation_callback(
@@ -268,7 +306,6 @@ async def _do_save_application(
     user,
     bot: Bot | None = None,
 ) -> None:
-    """Сохраняет анкету в БД и уведомляет HR."""
     app_id = await db.save_application(
         session,
         user_id=user.id,
