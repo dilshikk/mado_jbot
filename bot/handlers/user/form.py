@@ -31,9 +31,6 @@ MIN_VIDEO_DURATION = 15
 VALID_BRANCH = "Tashkent City Mall"
 
 # Статусы, при которых повторная подача анкеты запрещена (защита от дублей).
-# interview_in_progress — AI-интервью началось, кандидат ещё отвечает на вопросы.
-# screened — AI завершил оценку, отчёт в HR-чате, ждёт решения человека.
-# interview_failed не блокирует — кандидат может подать новую анкету.
 BLOCKING_STATUSES = {"pending", "interview_in_progress", "screened", "accepted", "hired", "hold"}
 
 # Все активные шаги анкеты (waiting_for_lang исключён — там своя логика)
@@ -87,8 +84,6 @@ async def start_anketa(message: Message, state: FSMContext, lang: str, session: 
         )
         return
 
-    # Защита от дублей: активная заявка любого типа блокирует новую подачу
-    # Для администраторов проверка пропускается — они могут тестировать анкету
     is_admin = message.from_user.id in ADMIN_IDS
     if not is_admin:
         status = await db.get_application_status(session, message.from_user.id)
@@ -98,7 +93,6 @@ async def start_anketa(message: Message, state: FSMContext, lang: str, session: 
             await message.answer(text, parse_mode="HTML")
             return
 
-    # ── Раздел «Личные данные»: ФИО первым шагом ──
     await state.update_data(branch=VALID_BRANCH)
     await message.answer(LOCALIZATION[lang]["ask_name"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_name)
@@ -158,14 +152,9 @@ async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
         )
         return
     await state.update_data(phone=phone)
-    # Шаг выбора метро — полностью через inline-клавиатуру (metro.py)
     from bot.handlers.user.metro import ask_metro  # noqa: PLC0415
     await ask_metro(message, state, lang)
 
-# ВАЖНО: обработчик process_metro (reply-клавиатура) удалён.
-# Выбор станции метро полностью обрабатывается в metro.py через callback_query.
-
-# ── Раздел «Информация о работе»: должность → готовность → опыт → ... ──
 
 @router.message(Form.waiting_position)
 async def process_position(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
@@ -205,7 +194,6 @@ async def process_video(message: Message, state: FSMContext, lang: str) -> None:
             )
             return
         await state.update_data(video_file_id=file_id, is_video_note=is_note, video_duration=duration)
-    # ── Итоговая сводка анкеты → подтверждение ──
     data = await state.get_data()
     summary = build_resume_text(data, lang)
     await message.answer(summary, reply_markup=kb.get_confirmation_keyboard(lang), parse_mode="HTML")
@@ -232,7 +220,6 @@ async def process_confirmation(
 
     user = message.from_user
 
-    # ── АТОМАРНОСТЬ: проверка статуса + INSERT защищены одним локом
     is_admin = user.id in ADMIN_IDS
     if not is_admin:
         async with submission_lock(user.id):
@@ -258,7 +245,7 @@ async def _do_save_application(
     """Сохраняет анкету в БД, отправляет HR и благодарит кандидата."""
     bot: Bot = message.bot
 
-    # ── 1. Сохранение в БД — используем реальную сигнатуру save_application ──
+    # Реальная сигнатура: save_application(session, user_id, name, birthday, phone, position, experience)
     application_id = await db.save_application(
         session,
         user_id=user.id,
@@ -269,13 +256,11 @@ async def _do_save_application(
         experience=data.get("experience", "—"),
     )
 
-    # ── 2. Подтверждение кандидату ──
     confirm_text = LOCALIZATION[lang]["anketa_confirmed"]
     await state.clear()
     await state.update_data(lang=lang)
     await message.answer(confirm_text, reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
 
-    # ── 3. Фоновые задачи (HR-уведомление, Google Sheets, AI) ──
     asyncio.create_task(_post_confirm_tasks(bot, session, user, data, application_id, lang))
 
 
@@ -290,13 +275,11 @@ async def _post_confirm_tasks(
     """Фоновые задачи после подтверждения анкеты: HR-сообщение, таблица, AI-скрининг."""
 
     # ── 1. Отправка резюме в HR-чат ──
+    # Реальная сигнатура: build_hr_resume_text(data, user_id, username)
     try:
-        resume_text = build_hr_resume_text(data, user)
-        await bot.send_message(
-            ADMIN_CHAT_ID,
-            resume_text,
-            parse_mode="HTML",
-        )
+        username_str = user.username or ""
+        resume_text = build_hr_resume_text(data, user.id, username_str)
+        await bot.send_message(ADMIN_CHAT_ID, resume_text, parse_mode="HTML")
         if data.get("photo_file_id"):
             await bot.send_photo(ADMIN_CHAT_ID, data["photo_file_id"])
         if data.get("video_file_id"):
@@ -306,8 +289,20 @@ async def _post_confirm_tasks(
         logger.error("Ошибка отправки резюме в HR-чат: %s", e, exc_info=True)
 
     # ── 2. Google Sheets ──
+    # Реальная сигнатура: append_to_sheet(data: list)
     try:
-        await append_to_sheet(data, user)
+        sheet_row = [
+            data.get("name", ""),
+            data.get("birthday", ""),
+            data.get("gender", ""),
+            data.get("phone", ""),
+            data.get("position", ""),
+            data.get("experience", ""),
+            data.get("address", ""),
+            user.username or "",
+            str(user.id),
+        ]
+        append_to_sheet(sheet_row)
     except Exception as e:
         logger.error("Ошибка записи в Google Sheets: %s", e, exc_info=True)
 
