@@ -242,6 +242,8 @@ async def process_video(message: Message, state: FSMContext, lang: str) -> None:
             )
             return
         await state.update_data(video_file_id=file_id, is_video_note=is_note, video_duration=duration)
+
+    # Показываем сводку анкеты с кнопками подтверждения
     data = await state.get_data()
     summary = build_resume_text(data, lang)
     with suppress(TelegramAPIError):
@@ -291,12 +293,12 @@ async def process_confirmation_callback(
                 block_text = LOCALIZATION[lang].get(key) or LOCALIZATION[lang]["anketa_block_pending"]
                 await callback.message.answer(block_text, parse_mode="HTML")
                 return
-            await _do_save_application(callback.message, state, session, lang, data, user, bot)
+            await _do_save_and_start_interview(callback.message, state, session, lang, data, user, bot)
     else:
-        await _do_save_application(callback.message, state, session, lang, data, user, bot)
+        await _do_save_and_start_interview(callback.message, state, session, lang, data, user, bot)
 
 
-async def _do_save_application(
+async def _do_save_and_start_interview(
     message: Message,
     state: FSMContext,
     session: AsyncSession,
@@ -305,6 +307,7 @@ async def _do_save_application(
     user,
     bot: Bot,
 ) -> None:
+    """Сохраняет анкету, отправляет HR и запускает AI-интервью с кандидатом."""
     app_id = await db.save_application(
         session,
         user_id=user.id,
@@ -338,45 +341,37 @@ async def _do_save_application(
         last_name=user.last_name,
     )
 
-    await state.clear()
-    await state.update_data(lang=lang)
-    await message.answer(
-        LOCALIZATION[lang]["anketa_done"],
-        reply_markup=kb.get_main_menu(lang),
-        parse_mode="HTML",
-    )
+    # Уведомляем HR о новой анкете
+    if ADMIN_CHAT_ID:
+        resume_text = build_hr_resume_text(data, lang, user)
+        try:
+            if data.get("photo_file_id"):
+                await bot.send_photo(
+                    ADMIN_CHAT_ID,
+                    photo=data["photo_file_id"],
+                    caption=resume_text,
+                    reply_markup=kb.get_hr_action_keyboard(
+                        phone=data.get("phone", ""),
+                        username=user.username or "",
+                        candidate_id=user.id,
+                    ),
+                    parse_mode="HTML",
+                )
+            else:
+                await bot.send_message(
+                    ADMIN_CHAT_ID,
+                    text=resume_text,
+                    reply_markup=kb.get_hr_action_keyboard(
+                        phone=data.get("phone", ""),
+                        username=user.username or "",
+                        candidate_id=user.id,
+                    ),
+                    parse_mode="HTML",
+                )
+        except TelegramAPIError as exc:
+            logger.error("_do_save_and_start_interview: failed to notify HR: %s", exc)
 
-    if not ADMIN_CHAT_ID:
-        return
-
-    resume_text = build_hr_resume_text(data, lang, user)
-    try:
-        if data.get("photo_file_id"):
-            await bot.send_photo(
-                ADMIN_CHAT_ID,
-                photo=data["photo_file_id"],
-                caption=resume_text,
-                reply_markup=kb.get_hr_action_keyboard(
-                    phone=data.get("phone", ""),
-                    username=user.username or "",
-                    candidate_id=user.id,
-                ),
-                parse_mode="HTML",
-            )
-        else:
-            await bot.send_message(
-                ADMIN_CHAT_ID,
-                text=resume_text,
-                reply_markup=kb.get_hr_action_keyboard(
-                    phone=data.get("phone", ""),
-                    username=user.username or "",
-                    candidate_id=user.id,
-                ),
-                parse_mode="HTML",
-            )
-    except TelegramAPIError as exc:
-        logger.error("_do_save_application: failed to notify HR: %s", exc)
-
+    # Фоновые задачи (Google Sheets, AI скрининг)
     try:
         await asyncio.gather(
             append_to_sheet(data, user),
@@ -384,4 +379,14 @@ async def _do_save_application(
             return_exceptions=True,
         )
     except Exception as exc:
-        logger.error("_do_save_application: post-save tasks failed: %s", exc)
+        logger.error("_do_save_and_start_interview: post-save tasks failed: %s", exc)
+
+    # Запускаем AI-интервью
+    from bot.handlers.user.interview import start_interview  # noqa: PLC0415
+    await start_interview(
+        message=message,
+        state=state,
+        session=session,
+        form_data=data,
+        lang=lang,
+    )
