@@ -15,15 +15,19 @@ def _field(data: dict[str, Any], key: str) -> str:
 
 
 def _metro(data: dict[str, Any], lang: str = "ru") -> str:
-    """Возвращает название станции метро из FSM-данных.
-
-    Приоритет:
-    1. metro_name  — строка, сохранённая хендлером metro.py при выборе станции
-    2. metro       — старое текстовое поле (обратная совместимость)
-    3. «—»         — если ни одного нет
-    """
+    """Возвращает название станции метро из FSM-данных."""
     name = data.get("metro_name") or data.get("metro")
     return str(name) if name else _NONE_PLACEHOLDER
+
+
+def _languages_text(data: dict[str, Any], lang: str) -> str:
+    """Возвращает читаемый список языков вместо кодов."""
+    langs = data.get("languages")
+    if not langs:
+        return _NONE_PLACEHOLDER
+    L = LOCALIZATION[lang]
+    names = [L.get(f"lang_opt_{code}", code) for code in langs]
+    return ", ".join(names)
 
 
 def build_resume_text(data: dict[str, Any], lang: str) -> str:
@@ -50,14 +54,25 @@ def build_resume_text(data: dict[str, Any], lang: str) -> str:
         f"📅 {'Готовность к работе' if lang == 'ru' else 'Ishga tayyorlik'}: {_field(data, 'readiness')}\n"
         f"💰 {'Зарплатные ожидания' if lang == 'ru' else 'Ish haqi kutilmalari'}: {_field(data, 'salary')}\n"
         f"🗓 {'График' if lang == 'ru' else 'Grafik'}: {_field(data, 'schedule')}\n"
-        f"🌐 {'Языки' if lang == 'ru' else 'Tillar'}: {_field(data, 'languages')}\n"
+        f"🌆 {'Вечерние смены' if lang == 'ru' else 'Kechki smenalar'}: {_field(data, 'evening_shifts')}\n"
+        f"📆 {'Выходные и праздники' if lang == 'ru' else 'Dam olish kunlari'}: {_field(data, 'weekends')}\n"
+        f"🚬 {'Курение' if lang == 'ru' else 'Chekish'}: {_field(data, 'smoking')}\n"
+        f"📗 {'Медицинская книжка' if lang == 'ru' else 'Tibbiy daftar'}: {_field(data, 'med_book')}\n"
+        f"🌐 {'Языки' if lang == 'ru' else 'Tillar'}: {_languages_text(data, lang)}\n"
         f"📱 {L['field_phone']}: {_field(data, 'phone')}\n"
         f"🎥 {video_label}"
     )
 
 
-def build_hr_resume_text(data: dict[str, Any], user_id: int, username: str) -> str:
+def build_hr_resume_text(data: dict[str, Any], lang: str, user: Any) -> str:
+    """
+    lang  — язык анкеты (для отображения значений).
+    user  — объект aiogram User (from_user).
+    HR-панель всегда на русском языке.
+    """
     L = LOCALIZATION["ru"]
+    user_id  = user.id
+    username = user.username or ""
     return (
         f"📝 <b>{L['hr_resume_title']}</b>\n\n"
         f"🏢 <b>{L['field_branch']}:</b> {_field(data, 'branch')}\n"
@@ -78,7 +93,7 @@ def build_hr_resume_text(data: dict[str, Any], user_id: int, username: str) -> s
         f"📆 <b>Выходные и праздники:</b> {_field(data, 'weekends')}\n"
         f"🚬 <b>Курение:</b> {_field(data, 'smoking')}\n"
         f"📗 <b>Медицинская книжка:</b> {_field(data, 'med_book')}\n"
-        f"🌐 <b>Языки:</b> {_field(data, 'languages')}\n"
+        f"🌐 <b>Языки:</b> {_languages_text(data, lang)}\n"
         f"📱 <b>{L['field_phone']}:</b> <code>{_field(data, 'phone')}</code>\n\n"
         f"🆔 Telegram ID: <code>{user_id}</code>\n"
         f"🔗 {L['field_username']}: @{username}"
