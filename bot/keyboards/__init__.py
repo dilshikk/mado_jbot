@@ -1,4 +1,5 @@
 from bot.keyboards.reply import (
+    get_admin_menu_keyboard,
     get_branch_keyboard,
     get_cancel_keyboard,
     get_citizenship_keyboard,
@@ -35,6 +36,7 @@ from bot.keyboards.inline_form import (
 
 __all__ = [
     # Reply keyboards (свободный ввод и главное меню)
+    "get_admin_menu_keyboard",
     "get_branch_keyboard",
     "get_cancel_keyboard",
     "get_citizenship_keyboard",
