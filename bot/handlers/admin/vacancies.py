@@ -3,19 +3,21 @@
 
 Навигация (Inline Keyboard):
   Главное меню → show_vacancies_screen()
-    Нажать на вакансию → экран вакансии (edit_text in-place)
-      ✅/❌ Включить/Выключить → toggle (edit_text)
-      ✏️ Изменить → выбор поля (edit_text) → FSM текстовый ввод
-      🗑 Удалить → подтверждение (edit_text) → удаление
-      ◀️ К вакансиям → список (edit_text)
-    ➕ Добавить → AddVacancy FSM (reply cancel keyboard)
-    🔄 Обновить → обновить список (edit_text)
-    ⬅️ Главное меню → вернуться в /admin (inline menu)
+  Нажать на вакансию → экран вакансии (edit_text in-place)
+    ✅/❌ Включить/Выключить → toggle
+    ✏️ Изменить → выбор поля → FSM текстовый ввод
+    🗑 Удалить → подтверждение → удаление
+    ◀️ К вакансиям → список
+  ➕ Добавить → AddVacancy FSM
+  🔄 Обновить → обновить список
+  ⬅️ Главное меню → /admin
 """
 
 import logging
+from contextlib import suppress
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -69,12 +71,12 @@ def _vacancy_detail_text(vacancy: dict) -> str:
 async def show_vacancies_screen(
     message: Message, session: AsyncSession, edit: bool = False
 ) -> None:
-    """Открывает экран вакансий. edit=True — редактирует существующее сообщение."""
     vacancies = await db.get_all_vacancies(session)
     text = _vac_text(vacancies)
-    kb = get_admin_vacancies_inline_kb(vacancies)
+    kb   = get_admin_vacancies_inline_kb(vacancies)
     if edit:
-        await message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        with suppress(TelegramBadRequest):
+            await message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     else:
         await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
@@ -88,7 +90,7 @@ async def cmd_vacancies(message: Message, session: AsyncSession) -> None:
     await show_vacancies_screen(message, session)
 
 
-# ── Callback: список вакансий ─────────────────────────────────────────────────
+# ── Callback: vac:list ────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "vac:list")
 async def cb_vac_list(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
@@ -97,10 +99,11 @@ async def cb_vac_list(callback: CallbackQuery, state: FSMContext, session: Async
         return
     await state.clear()
     vacancies = await db.get_all_vacancies(session)
-    await callback.message.edit_text(
-        _vac_text(vacancies), parse_mode="HTML",
-        reply_markup=get_admin_vacancies_inline_kb(vacancies),
-    )
+    with suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            _vac_text(vacancies), parse_mode="HTML",
+            reply_markup=get_admin_vacancies_inline_kb(vacancies),
+        )
     await callback.answer()
 
 
@@ -111,10 +114,11 @@ async def cb_vac_refresh(callback: CallbackQuery, state: FSMContext, session: As
         return
     await state.clear()
     vacancies = await db.get_all_vacancies(session)
-    await callback.message.edit_text(
-        _vac_text(vacancies), parse_mode="HTML",
-        reply_markup=get_admin_vacancies_inline_kb(vacancies),
-    )
+    with suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            _vac_text(vacancies), parse_mode="HTML",
+            reply_markup=get_admin_vacancies_inline_kb(vacancies),
+        )
     await callback.answer("Обновлено ✅")
 
 
@@ -124,15 +128,16 @@ async def cb_vac_home(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         return
     await state.clear()
-    await callback.message.edit_text(
-        "🛠 <b>Панель администратора</b>\n\nВыберите раздел:",
-        parse_mode="HTML",
-        reply_markup=get_admin_menu_inline_kb(),
-    )
+    with suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            "🛠 <b>Панель администратора</b>\n\nВыберите раздел:",
+            parse_mode="HTML",
+            reply_markup=get_admin_menu_inline_kb(),
+        )
     await callback.answer()
 
 
-# ── Callback: выбор вакансии ──────────────────────────────────────────────────
+# ── Callback: vac:select:{id} ────────────────────────────────────────────────
 
 @router.callback_query(F.data.startswith("vac:select:"))
 async def cb_vac_select(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
@@ -145,14 +150,15 @@ async def cb_vac_select(callback: CallbackQuery, state: FSMContext, session: Asy
         await callback.answer("Вакансия не найдена", show_alert=True)
         return
     await state.update_data(selected_vacancy_id=vacancy_id)
-    await callback.message.edit_text(
-        _vacancy_detail_text(vacancy), parse_mode="HTML",
-        reply_markup=get_admin_vacancy_item_inline_kb(vacancy_id, vacancy["is_active"]),
-    )
+    with suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            _vacancy_detail_text(vacancy), parse_mode="HTML",
+            reply_markup=get_admin_vacancy_item_inline_kb(vacancy_id, vacancy["is_active"]),
+        )
     await callback.answer()
 
 
-# ── Callback: toggle ──────────────────────────────────────────────────────────
+# ── Callback: vac:toggle:{id} ────────────────────────────────────────────────
 
 @router.callback_query(F.data.startswith("vac:toggle:"))
 async def cb_vac_toggle(callback: CallbackQuery, session: AsyncSession) -> None:
@@ -160,20 +166,21 @@ async def cb_vac_toggle(callback: CallbackQuery, session: AsyncSession) -> None:
         await callback.answer()
         return
     vacancy_id = int(callback.data.split(":")[2])
-    is_active = await db.toggle_vacancy(session, vacancy_id)
-    vacancy = await db.get_vacancy_by_id(session, vacancy_id)
+    is_active  = await db.toggle_vacancy(session, vacancy_id)
+    vacancy    = await db.get_vacancy_by_id(session, vacancy_id)
     if not vacancy:
         await callback.answer("Вакансия не найдена", show_alert=True)
         return
-    await callback.message.edit_text(
-        _vacancy_detail_text(vacancy), parse_mode="HTML",
-        reply_markup=get_admin_vacancy_item_inline_kb(vacancy_id, is_active),
-    )
+    with suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            _vacancy_detail_text(vacancy), parse_mode="HTML",
+            reply_markup=get_admin_vacancy_item_inline_kb(vacancy_id, is_active),
+        )
     await callback.answer("✅ Включена" if is_active else "❌ Выключена")
     logger.info("Вакансия id=%d → is_active=%s", vacancy_id, is_active)
 
 
-# ── Callback: edit ────────────────────────────────────────────────────────────
+# ── Callback: vac:edit:{id} ───────────────────────────────────────────────────
 
 @router.callback_query(F.data.startswith("vac:edit:"))
 async def cb_vac_edit(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
@@ -181,38 +188,39 @@ async def cb_vac_edit(callback: CallbackQuery, state: FSMContext, session: Async
         await callback.answer()
         return
     vacancy_id = int(callback.data.split(":")[2])
-    vacancy = await db.get_vacancy_by_id(session, vacancy_id)
+    vacancy    = await db.get_vacancy_by_id(session, vacancy_id)
     if not vacancy:
         await callback.answer("Вакансия не найдена", show_alert=True)
         return
     label = f"{vacancy.get('emoji', '')} {vacancy['name_ru']}".strip()
     await state.update_data(selected_vacancy_id=vacancy_id)
     await state.set_state(EditVacancy.choosing_field)
-    await callback.message.edit_text(
-        f"✏️ <b>Редактировать: {label}</b>\n\nЧто изменить?",
-        parse_mode="HTML",
-        reply_markup=get_admin_vacancy_edit_inline_kb(vacancy_id),
-    )
+    with suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            f"✏️ <b>Редактировать: {label}</b>\n\nЧто изменить?",
+            parse_mode="HTML",
+            reply_markup=get_admin_vacancy_edit_inline_kb(vacancy_id),
+        )
     await callback.answer()
 
 
-# ── Callback: editfield ───────────────────────────────────────────────────────
+# ── Callback: vac:editfield:{id}:{field} ─────────────────────────────────────
 
 @router.callback_query(F.data.startswith("vac:editfield:"))
 async def cb_vac_editfield(callback: CallbackQuery, state: FSMContext) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer()
         return
-    parts = callback.data.split(":")
+    parts      = callback.data.split(":")
     vacancy_id = int(parts[2])
-    field = parts[3]
+    field      = parts[3]
     field_labels = {
         "name_ru": "название на <b>русском</b>",
         "name_uz": "название на <b>узбекском</b>",
-        "emoji": "<b>эмодзи</b>",
+        "emoji":   "<b>эмодзи</b>",
     }
     label = field_labels.get(field, field)
-    hint = "\nОтправьте <code>-</code> чтобы убрать эмодзи." if field == "emoji" else ""
+    hint  = "\nОтправьте <code>-</code> чтобы убрать эмодзи." if field == "emoji" else ""
     await state.update_data(selected_vacancy_id=vacancy_id, edit_field=field)
     await state.set_state(EditVacancy.waiting_value)
     await callback.message.answer(
@@ -223,7 +231,7 @@ async def cb_vac_editfield(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
-# ── Callback: delete ──────────────────────────────────────────────────────────
+# ── Callback: vac:delete:{id} ────────────────────────────────────────────────
 
 @router.callback_query(F.data.startswith("vac:delete:"))
 async def cb_vac_delete(callback: CallbackQuery, session: AsyncSession) -> None:
@@ -231,21 +239,22 @@ async def cb_vac_delete(callback: CallbackQuery, session: AsyncSession) -> None:
         await callback.answer()
         return
     vacancy_id = int(callback.data.split(":")[2])
-    vacancy = await db.get_vacancy_by_id(session, vacancy_id)
+    vacancy    = await db.get_vacancy_by_id(session, vacancy_id)
     if not vacancy:
         await callback.answer("Вакансия не найдена", show_alert=True)
         return
     label = f"{vacancy.get('emoji', '')} {vacancy['name_ru']}".strip()
-    await callback.message.edit_text(
-        f"🗑 <b>Удалить вакансию?</b>\n\n«{label}»\n\n"
-        f"<i>Это необратимо. Анкеты не затрагиваются.</i>",
-        parse_mode="HTML",
-        reply_markup=get_admin_vacancy_confirm_delete_inline_kb(vacancy_id),
-    )
+    with suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            f"🗑 <b>Удалить вакансию?</b>\n\n«{label}»\n\n"
+            f"<i>Это необратимо. Анкеты не затрагиваются.</i>",
+            parse_mode="HTML",
+            reply_markup=get_admin_vacancy_confirm_delete_inline_kb(vacancy_id),
+        )
     await callback.answer()
 
 
-# ── Callback: confirm_delete ──────────────────────────────────────────────────
+# ── Callback: vac:confirm_delete:{id} ────────────────────────────────────────
 
 @router.callback_query(F.data.startswith("vac:confirm_delete:"))
 async def cb_vac_confirm_delete(
@@ -255,21 +264,22 @@ async def cb_vac_confirm_delete(
         await callback.answer()
         return
     vacancy_id = int(callback.data.split(":")[2])
-    vacancy = await db.get_vacancy_by_id(session, vacancy_id)
-    name = f"{vacancy.get('emoji', '')} {vacancy['name_ru']}".strip() if vacancy else f"#{vacancy_id}"
+    vacancy    = await db.get_vacancy_by_id(session, vacancy_id)
+    name       = f"{vacancy.get('emoji', '')} {vacancy['name_ru']}".strip() if vacancy else f"#{vacancy_id}"
     await db.delete_vacancy(session, vacancy_id)
     logger.info("Вакансия id=%d «%s» удалена", vacancy_id, name)
     await state.clear()
     vacancies = await db.get_all_vacancies(session)
-    await callback.message.edit_text(
-        f"✅ «{name}» удалена.\n\n" + _vac_text(vacancies),
-        parse_mode="HTML",
-        reply_markup=get_admin_vacancies_inline_kb(vacancies),
-    )
+    with suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            f"✅ «{name}» удалена.\n\n" + _vac_text(vacancies),
+            parse_mode="HTML",
+            reply_markup=get_admin_vacancies_inline_kb(vacancies),
+        )
     await callback.answer("Удалено")
 
 
-# ── Callback: add ─────────────────────────────────────────────────────────────
+# ── Callback: vac:add ────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "vac:add")
 async def cb_vac_add(callback: CallbackQuery, state: FSMContext) -> None:
@@ -347,7 +357,7 @@ async def vac_add_emoji(message: Message, state: FSMContext, session: AsyncSessi
 
 async def _save_vacancy(message: Message, state: FSMContext, session: AsyncSession, emoji: str) -> None:
     data = await state.get_data()
-    vid = await db.add_vacancy(session, data["name_ru"], data["name_uz"], emoji)
+    vid  = await db.add_vacancy(session, data["name_ru"], data["name_uz"], emoji)
     logger.info("Добавлена вакансия id=%d: %s / %s", vid, data["name_ru"], data["name_uz"])
     await state.clear()
     vacancies = await db.get_all_vacancies(session)
@@ -370,25 +380,23 @@ async def vac_save_field(message: Message, state: FSMContext, session: AsyncSess
         await state.clear()
         await _send_vac_list(message, session)
         return
-    data = await state.get_data()
+    data       = await state.get_data()
     vacancy_id = data.get("selected_vacancy_id")
-    field = data.get("edit_field")
-    value = (message.text or "").strip()
-
+    field      = data.get("edit_field")
+    value      = (message.text or "").strip()
     if field in ("name_ru", "name_uz") and len(value) < 2:
         await message.answer("❌ Слишком короткое название. Попробуйте ещё раз:",
                              reply_markup=get_admin_cancel_keyboard())
         return
     if field == "emoji" and value == "-":
         value = ""
-
     await db.update_vacancy(session, vacancy_id, **{field: value})
     logger.info("Вакансия id=%d поле=%s обновлено: %r", vacancy_id, field, value)
     await state.clear()
     vacancies = await db.get_all_vacancies(session)
     await message.answer("⏳", reply_markup=remove_keyboard())
     await message.answer(
-        f"✅ Обновлено!\n\n" + _vac_text(vacancies),
+        "✅ Обновлено!\n\n" + _vac_text(vacancies),
         parse_mode="HTML",
         reply_markup=get_admin_vacancies_inline_kb(vacancies),
     )
