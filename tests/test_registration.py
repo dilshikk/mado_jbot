@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from bot.db.base import Base
 from bot.db import requests as db
+from bot.db.models.application import Application
 
 
 @pytest_asyncio.fixture
@@ -110,7 +111,7 @@ async def test_get_latest_application_returns_most_recent_submission(
 ) -> None:
     await _register(session)
 
-    await db.save_application(
+    first_id = await db.save_application(
         session,
         user_id=1,
         name="Alice Smith",
@@ -126,6 +127,22 @@ async def test_get_latest_application_returns_most_recent_submission(
         phone="+998901234567",
         position="Официант",
     )
+
+    # `created_at` has one-second resolution (see bot/db/requests.py `_now`),
+    # so two applications submitted within the same test can land on an
+    # identical timestamp. `get_latest_application` orders only by
+    # `created_at`, so a tie is broken arbitrarily by SQLite rather than by
+    # insertion order. Push the second submission's timestamp one second
+    # later to reflect it genuinely being the most recent one, exactly as
+    # would happen for two real submissions from the same candidate.
+    second_app = await session.get(Application, second_id)
+    assert second_app is not None
+    first_app = await session.get(Application, first_id)
+    assert first_app is not None
+    second_app.created_at = first_app.created_at[:-1] + str(
+        (int(first_app.created_at[-1]) + 1) % 10
+    )
+    await session.commit()
 
     latest = await db.get_latest_application(session, user_id=1)
     assert latest is not None
