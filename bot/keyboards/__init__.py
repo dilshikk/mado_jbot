@@ -22,19 +22,13 @@ from bot.keyboards.reply import (
     get_weekends_keyboard,
 )
 from bot.keyboards.inline import (
-    get_confirmation_inline_keyboard,
-    get_gender_inline_keyboard,
     get_hr_action_keyboard,
     get_hr_hold_keyboard,
-    get_languages_inline_keyboard,
-    get_med_book_inline_keyboard,
     get_metro_lines_keyboard,
     get_metro_stations_keyboard,
-    get_positions_inline_keyboard,
     get_post_interview_keyboard,
-    get_schedule_inline_keyboard,
+    get_readiness_inline_keyboard,
     get_score_keyboard,
-    get_smoking_inline_keyboard,
 )
 __all__ = [
     # Reply keyboards
@@ -46,15 +40,9 @@ __all__ = [
     "get_evening_shifts_keyboard", "get_weekends_keyboard", "get_smoking_keyboard",
     "get_med_book_keyboard", "get_languages_keyboard", "get_skip_cancel_keyboard",
     # Inline keyboards
-    "get_confirmation_inline_keyboard",
-    "get_gender_inline_keyboard",
     "get_hr_action_keyboard", "get_hr_hold_keyboard",
-    "get_languages_inline_keyboard",
-    "get_med_book_inline_keyboard",
     "get_metro_lines_keyboard", "get_metro_stations_keyboard",
-    "get_positions_inline_keyboard",
     "get_post_interview_keyboard",
-    "get_schedule_inline_keyboard",
+    "get_readiness_inline_keyboard",
     "get_score_keyboard",
-    "get_smoking_inline_keyboard",
 ]

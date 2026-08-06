@@ -33,8 +33,8 @@ logger = logging.getLogger(__name__)
 MIN_VIDEO_DURATION = 15
 VALID_BRANCH = "Tashkent City Mall"
 
-# Статусы, при которых повторная подача анкеты запрещена (защита от дублей).
-BLOCKING_STATUSES = {"pending", "interview_in_progress", "screened", "accepted", "hired", "hold"}
+# Статусы, при которых повторная подача анкеты запрещена (защита от дублей)
+BLOCKING_STATUSES = {"pending", "accepted", "hired", "hold"}
 
 # Все активные шаги анкеты (waiting_for_lang исключён — там своя логика)
 _FORM_ACTIVE_STATES = (
@@ -60,26 +60,8 @@ def _valid_position_labels(vacancies: list[dict]) -> set[str]:
                 labels.add(name)
     return labels
 
-def _is_valid_full_name(text: str) -> bool:
-    """Проверяет ФИО: минимум два слова, без цифр и служебных символов.
 
-    Отсекает случаи, когда кандидат копирует текст подсказки
-    (например «ФИО полностью:») вместо своего имени.
-    """
-    if len(text) < 5 or len(text) > 100:
-        return False
-    if any(ch.isdigit() for ch in text):
-        return False
-    if any(ch in text for ch in ":;/\\_@#*<>"):
-        return False
-    words = [w for w in re.split(r"[\s\-]+", text) if w]
-    if len(words) < 2:
-        return False
-    # Каждое слово — минимум 2 буквы
-    return all(len(w) >= 2 and all(ch.isalpha() or ch in "''." for ch in w) for w in words)
-
-
-# ─── Отмена анкеты — Message (кнопка Reply или /cancel) ──────────────────────
+# ─── Отмена анкеты — Message ──────────────────────────────────────────────────
 
 @router.message(StateFilter(*_FORM_ACTIVE_STATES), IsCancelMessage())
 @router.message(StateFilter(*_FORM_ACTIVE_STATES), Command("cancel"))
@@ -90,7 +72,7 @@ async def cancel_form(message: Message, state: FSMContext, lang: str) -> None:
     await message.answer(LOCALIZATION[lang]["anketa_cancelled"], reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
 
 
-# ─── Отмена анкеты — Callback (inline-кнопки форм) ───────────────────────────
+# ─── Отмена анкеты — Callback (inline-кнопки) ────────────────────────────────
 
 @router.callback_query(StateFilter(*_FORM_ACTIVE_STATES), F.data == "form_cancel")
 async def cancel_form_callback(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
@@ -119,7 +101,7 @@ async def start_anketa(message: Message, state: FSMContext, lang: str, session: 
     vacancies = await db.get_active_vacancies(session)
     if not vacancies:
         await message.answer(
-            "⏳ В данный момент открытых вакансий нет. \n\nСледите за обновлениям!"
+            "⏳ В данный момент открытых вакансий нет. \n\nСледите за обновлениями!"
             if lang == "ru" else
             "⏳ Hozirda ochiq vakansiyalar yo'q. \n\nYangilanishlarni kuzatib boring!",
             parse_mode="HTML",
@@ -140,25 +122,16 @@ async def start_anketa(message: Message, state: FSMContext, lang: str, session: 
     await state.set_state(Form.waiting_name)
 
 
-# ─── Шаг: Имя ─────────────────────────────────────────────────────────────────
-
 @router.message(Form.waiting_name)
 async def process_name(message: Message, state: FSMContext, lang: str) -> None:
     text = (message.text or "").strip()
-    if not _is_valid_full_name(text):
-        hint = (
-            "❌ Введите ваше настоящее ФИО полностью, например: Иванов Иван Иванович "
-            if lang == "ru" else
-            "❌ To'liq ism-familiyangizni kiriting, masalan: Aliyev Ali Alievich "
-        )
-        await message.answer(LOCALIZATION[lang].get("bad_name") or hint, parse_mode="HTML")
+    if len(text) < 3 or any(ch.isdigit() for ch in text):
+        await message.answer(LOCALIZATION[lang].get("bad_name", "Введите корректное ФИО."), parse_mode="HTML")
         return
     await state.update_data(name=text)
     await message.answer(LOCALIZATION[lang]["ask_birthday"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_birthday)
 
-
-# ─── Шаг: Дата рождения ────────────────────────────────────────────────────────
 
 @router.message(Form.waiting_birthday)
 async def process_birthday(message: Message, state: FSMContext, lang: str) -> None:
@@ -179,35 +152,19 @@ async def process_birthday(message: Message, state: FSMContext, lang: str) -> No
         )
         return
     await state.update_data(birthday=text)
-    # ── Inline-клавиатура выбора пола ──
-    await message.answer(
-        LOCALIZATION[lang]["ask_gender"],
-        reply_markup=kb.get_gender_inline_keyboard(lang),
-        parse_mode="HTML",
-    )
+    await message.answer(LOCALIZATION[lang]["ask_gender"], reply_markup=kb.get_gender_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_gender)
 
 
-# ─── Шаг: Пол (Inline CallbackQuery) ─────────────────────────────────────────
-
-@router.callback_query(Form.waiting_gender, F.data.startswith("gender:"))
-async def process_gender(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
-    await callback.answer()
-    gender_key = callback.data.split(":")[1]  # "male" or "female"
-    t = LOCALIZATION[lang]
-    gender_text = t["gender_male"] if gender_key == "male" else t["gender_female"]
-    await state.update_data(gender=gender_text)
-    with suppress(TelegramAPIError):
-        await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer(
-        LOCALIZATION[lang]["ask_phone"],
-        reply_markup=kb.get_phone_keyboard(lang),
-        parse_mode="HTML",
-    )
+@router.message(Form.waiting_gender)
+async def process_gender(message: Message, state: FSMContext, lang: str) -> None:
+    if message.text not in {LOCALIZATION[lang]["gender_male"], LOCALIZATION[lang]["gender_female"]}:
+        await message.answer(LOCALIZATION[lang]["ask_gender"], reply_markup=kb.get_gender_keyboard(lang), parse_mode="HTML")
+        return
+    await state.update_data(gender=message.text)
+    await message.answer(LOCALIZATION[lang]["ask_phone"], reply_markup=kb.get_phone_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_phone)
 
-
-# ─── Шаг: Телефон ────────────────────────────────────────────────────────────
 
 @router.message(Form.waiting_phone)
 async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
@@ -219,39 +176,49 @@ async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
         )
         return
     await state.update_data(phone=phone)
-    from bot.handlers.user.metro import ask_metro  # noqa: PLC0415
-    await ask_metro(message, state, lang)
+    await message.answer(LOCALIZATION[lang]["ask_metro"], reply_markup=kb.get_metro_keyboard(lang), parse_mode="HTML")
+    await state.set_state(Form.waiting_metro)
 
 
-# ─── Шаг: Вакансия (Inline CallbackQuery) ────────────────────────────────────
+@router.message(Form.waiting_metro)
+async def process_metro(message: Message, state: FSMContext, lang: str) -> None:
+    text = (message.text or "").strip()
+    skip_value = LOCALIZATION[lang].get("metro_skip", LOCALIZATION[lang]["btn_skip"])
+    valid_values = {
+        button.text
+        for row in kb.get_metro_keyboard(lang).keyboard
+        for button in row
+        if button.text != LOCALIZATION[lang]["btn_cancel"]
+    }
+    if text not in valid_values:
+        await message.answer(LOCALIZATION[lang]["ask_metro"], reply_markup=kb.get_metro_keyboard(lang), parse_mode="HTML")
+        return
+    await state.update_data(metro=None if text == skip_value else text)
+    await message.answer(LOCALIZATION[lang]["ask_languages"], reply_markup=kb.get_languages_keyboard(lang), parse_mode="HTML")
+    await state.set_state(Form.waiting_languages)
 
-@router.callback_query(Form.waiting_position, F.data.startswith("position:"))
-async def process_position(callback: CallbackQuery, state: FSMContext, lang: str, session: AsyncSession) -> None:
-    await callback.answer()
-    vacancy_id = int(callback.data.split(":")[1])
-    vacancy = await db.get_vacancy_by_id(session, vacancy_id)
-    if not vacancy:
-        await callback.answer(
-            "Вакансия не найдена" if lang == "ru" else "Vakansiya topilmadi",
-            show_alert=True,
+
+@router.message(Form.waiting_position)
+async def process_position(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
+    vacancies = await db.get_active_vacancies(session)
+    valid = _valid_position_labels(vacancies)
+    chosen = (message.text or "").strip()
+    if chosen not in valid:
+        await message.answer(
+            LOCALIZATION[lang]["ask_position"],
+            reply_markup=kb.get_positions_keyboard(lang, vacancies),
+            parse_mode="HTML",
         )
         return
-    name_key = "name_ru" if lang == "ru" else "name_uz"
-    emoji = (vacancy.get("emoji") or "").strip()
-    name = (vacancy.get(name_key) or "").strip()
-    position_label = f"{emoji} {name}".strip() if emoji else name
-    await state.update_data(position=position_label, position_id=vacancy_id)
-    with suppress(TelegramAPIError):
-        await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer(
+    await state.update_data(position=chosen)
+    # ── Inline-клавиатура готовности к работе ──
+    await message.answer(
         LOCALIZATION[lang]["ask_readiness"],
-        reply_markup=kb.get_readiness_keyboard(lang),
+        reply_markup=kb.get_readiness_inline_keyboard(lang),
         parse_mode="HTML",
     )
     await state.set_state(Form.waiting_readiness)
 
-
-# ─── Шаг: Видео → переход к подтверждению ────────────────────────────────────
 
 @router.message(Form.waiting_video)
 async def process_video(message: Message, state: FSMContext, lang: str) -> None:
@@ -276,41 +243,29 @@ async def process_video(message: Message, state: FSMContext, lang: str) -> None:
         await state.update_data(video_file_id=file_id, is_video_note=is_note, video_duration=duration)
     data = await state.get_data()
     summary = build_resume_text(data, lang)
-    # ── Inline-клавиатура подтверждения (без reply-кнопок) ──
-    await message.answer(summary, reply_markup=kb.get_confirmation_inline_keyboard(lang), parse_mode="HTML")
+    await message.answer(summary, reply_markup=kb.get_confirmation_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_confirmation)
 
 
-# ─── Шаг: Подтверждение (Inline CallbackQuery) ────────────────────────────────
-
-@router.callback_query(Form.waiting_confirmation, F.data == "confirm:no")
-async def process_confirmation_no(
-    callback: CallbackQuery,
+@router.message(Form.waiting_confirmation)
+async def process_confirmation(
+    message: Message,
     state: FSMContext,
     lang: str,
     session: AsyncSession,
 ) -> None:
-    await callback.answer()
-    with suppress(TelegramAPIError):
-        await callback.message.edit_reply_markup(reply_markup=None)
-    await state.clear()
-    await state.update_data(lang=lang)
-    await start_anketa(callback.message, state, lang, session)
-
-
-@router.callback_query(Form.waiting_confirmation, F.data == "confirm:yes")
-async def process_confirmation_yes(
-    callback: CallbackQuery,
-    state: FSMContext,
-    lang: str,
-    session: AsyncSession,
-    bot: Bot,
-) -> None:
-    await callback.answer()
-    with suppress(TelegramAPIError):
-        await callback.message.edit_reply_markup(reply_markup=None)
     data = await state.get_data()
-    user = callback.from_user
+
+    if message.text in {LOCALIZATION["ru"]["confirm_btn_no"], LOCALIZATION["uz"]["confirm_btn_no"]}:
+        await state.clear()
+        await state.update_data(lang=lang)
+        await start_anketa(message, state, lang, session)
+        return
+
+    if message.text not in {LOCALIZATION["ru"]["confirm_btn_yes"], LOCALIZATION["uz"]["confirm_btn_yes"]}:
+        return
+
+    user = message.from_user
 
     is_admin = user.id in ADMIN_IDS
     if not is_admin:
@@ -319,11 +274,11 @@ async def process_confirmation_yes(
             if status in BLOCKING_STATUSES:
                 key = f"anketa_block_{status}"
                 block_text = LOCALIZATION[lang].get(key) or LOCALIZATION[lang]["anketa_block_pending"]
-                await callback.message.answer(block_text, parse_mode="HTML")
+                await message.answer(block_text, parse_mode="HTML")
                 return
-            await _do_save_application(callback.message, state, session, lang, data, user, bot)
+            await _do_save_application(message, state, session, lang, data, user)
     else:
-        await _do_save_application(callback.message, state, session, lang, data, user, bot)
+        await _do_save_application(message, state, session, lang, data, user)
 
 
 async def _do_save_application(
@@ -408,7 +363,6 @@ async def _do_save_application(
     except TelegramAPIError as exc:
         logger.error("_do_save_application: failed to notify HR: %s", exc)
 
-    # Отправляем в Google Sheets и запускаем AI-скрининг
     try:
         await asyncio.gather(
             append_to_sheet(data, user),
