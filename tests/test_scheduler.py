@@ -98,6 +98,10 @@ async def test_send_interview_reminders_notifies_candidates_due_soon(test_sessio
             session, user_id=1, name="Alice", birthday="01.01.2000",
             phone="+998900000001", position="Повар",
         )
+        # get_pending_reminders() only considers applications with
+        # status="accepted" (see bot/db/requests.py) — an interview time
+        # alone is not enough.
+        await db.update_application_status(session, user_id=1, status="accepted")
         soon = _fmt(datetime.now() + timedelta(hours=1))
         await db.set_interview_time(session, user_id=1, interview_iso=soon)
 
@@ -120,6 +124,7 @@ async def test_send_interview_reminders_skips_interviews_too_far_in_future(test_
             session, user_id=2, name="Bob", birthday="01.01.2000",
             phone="+998900000002", position="Официант",
         )
+        await db.update_application_status(session, user_id=2, status="accepted")
         far_future = _fmt(datetime.now() + timedelta(days=5))
         await db.set_interview_time(session, user_id=2, interview_iso=far_future)
 
@@ -137,6 +142,7 @@ async def test_send_interview_reminders_marks_sent_even_when_delivery_blocked(te
             session, user_id=3, name="Cara", birthday="01.01.2000",
             phone="+998900000003", position="Кассир",
         )
+        await db.update_application_status(session, user_id=3, status="accepted")
         soon = _fmt(datetime.now() + timedelta(hours=1))
         await db.set_interview_time(session, user_id=3, interview_iso=soon)
 
