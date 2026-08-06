@@ -1,20 +1,10 @@
 # bot/handlers/user/metro.py
-"""Inline-хендлер выбора станции метро.
-
-Логика:
-1. Бот отправляет сообщение с inline-клавиатурой «Выберите линию».
-2. Пользователь выбирает линию → сообщение редактируется, показываются станции линии.
-3. Пользователь выбирает станцию → metro_station_id сохраняется в FSM, диалог продолжается.
-4. «Назад» → возвращает к выбору линии.
-5. «Пропустить» → metro_station_id = None.
-6. «Отменить заполнение» → сброс анкеты и возврат в главное меню.
-Названия станций никогда не хранятся текстом — только metro_station_id.
-"""
+"""Inline-хендлер выбора станции метро."""
 
 import logging
 from contextlib import suppress
 
-from aiogram import Bot, F, Router
+from aiogram import F, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -31,39 +21,31 @@ router.callback_query.filter(IsPrivateChat())
 
 logger = logging.getLogger(__name__)
 
-# Текст приглашения выбора метро
 _PROMPT = {
     "ru": "🚇 Выберите ближайшую станцию метро:",
     "uz": "🚇 Eng yaqin metro bekatini tanlang:",
 }
 
+_RECAP_LABEL = {
+    "ru": "🚇 Ближайшее метро",
+    "uz": "🚇 Eng yaqin metro",
+}
+
 
 async def ask_metro(message: Message, state: FSMContext, lang: str) -> None:
-    """Отправляет сообщение с inline-клавиатурой линий метро.
-
-    Вызывается из form.py после шага «телефон».
-    Сначала убирает reply-клавиатуру предыдущего шага (контакт/отмена),
-    чтобы она не висела поверх inline-кнопок выбора метро.
-    """
     await state.set_state(Form.waiting_metro)
-
-    # Telegram не позволяет убрать reply-клавиатуру и показать inline в одном
-    # сообщении — отправляем техническое сообщение и сразу удаляем его.
     with suppress(TelegramAPIError):
         stub = await message.answer("🚇", reply_markup=kb.remove_keyboard())
     with suppress(TelegramAPIError):
         await stub.delete()
-
     await message.answer(
         _PROMPT.get(lang, _PROMPT["ru"]),
         reply_markup=kb.get_metro_lines_keyboard(lang),
     )
 
 
-# ─── Переход к следующему шагу (языки) ────────────────────────────
-
 async def _go_to_languages(message: Message, state: FSMContext, session: AsyncSession, lang: str) -> None:
-    """После выбора/пропуска метро → переход к выбору языков."""
+    """Переходим к следующему шагу — выбор языков."""
     from bot.handlers.user.form_extra import ask_languages  # noqa: PLC0415
     await ask_languages(message, state, lang)
 
@@ -81,7 +63,7 @@ async def on_metro_line(callback: CallbackQuery, state: FSMContext, session: Asy
         logger.info("on_metro_line: user_id=%d skipped", callback.from_user.id)
         with suppress(TelegramAPIError):
             await callback.answer()
-        # Сначала переходим к следующему шагу, потом удаляем сообщение
+        # Сначала следующий шаг, потом удаляем — иначе message недоступен
         await _go_to_languages(callback.message, state, session, lang)
         with suppress(TelegramAPIError):
             await callback.message.delete()
@@ -105,7 +87,6 @@ async def on_metro_line(callback: CallbackQuery, state: FSMContext, session: Asy
             reply_markup=kb.get_metro_stations_keyboard(stations, line, lang),
             parse_mode="HTML",
         )
-    # Сохраняем выбранную линию в state для возврата назад
     await state.update_data(_metro_current_line=line)
     with suppress(TelegramAPIError):
         await callback.answer()
@@ -134,12 +115,17 @@ async def on_metro_station(callback: CallbackQuery, state: FSMContext, session: 
         callback.from_user.id, station_id, station_name,
     )
 
-    # ВАЖНО: сначала отвечаем на callback и отправляем следующий шаг,
-    # а только потом удаляем сообщение.
-    # Если удалить сначала — suppress скроет ошибку и следующий шаг не придёт.
     with suppress(TelegramAPIError):
         await callback.answer(f"✅ {station_name}")
 
+    # Recap-сообщение — показываем выбранную станцию
+    recap_label = _RECAP_LABEL.get(lang, _RECAP_LABEL["ru"])
+    await callback.message.answer(
+        f"{recap_label}: <b>{station_name}</b>",
+        parse_mode="HTML",
+    )
+
+    # Переходим к следующему шагу ПЕРЕД удалением сообщения с кнопками
     await _go_to_languages(callback.message, state, session, lang)
 
     with suppress(TelegramAPIError):
@@ -165,7 +151,6 @@ async def on_metro_back(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "metro_cancel")
 async def on_cancel(callback: CallbackQuery, state: FSMContext) -> None:
-    """Отмена анкеты прямо с шага выбора метро."""
     data = await state.get_data()
     lang = data.get("lang", "ru")
 
@@ -175,7 +160,6 @@ async def on_cancel(callback: CallbackQuery, state: FSMContext) -> None:
 
     with suppress(TelegramAPIError):
         await callback.answer()
-    # Сначала отправляем сообщение об отмене, потом удаляем клавиатуру метро
     await callback.message.answer(
         LOCALIZATION[lang]["anketa_cancelled"],
         reply_markup=kb.get_main_menu(lang),
