@@ -4,11 +4,12 @@ Inline-клавиатуры для пользовательской анкеты
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from bot.lexicon.form_extra import FORM_EXTRA_TEXTS as _TEXTS
+from bot.lexicon import LOCALIZATION
 
 
 def _t(lang: str, key: str) -> str:
-    return _TEXTS.get(lang, _TEXTS["ru"]).get(key, key)
+    """Получить текст из полного объединённого словаря LOCALIZATION."""
+    return LOCALIZATION.get(lang, LOCALIZATION["ru"]).get(key, key)
 
 
 # ─── Пол ──────────────────────────────────────────────────────────────────────
@@ -19,7 +20,7 @@ def get_gender_keyboard(lang: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=_t(lang, "gender_male"),   callback_data="gender:male"),
             InlineKeyboardButton(text=_t(lang, "gender_female"), callback_data="gender:female"),
         ],
-        [InlineKeyboardButton(text=_t(lang, "form_cancel"), callback_data="form_cancel")],
+        [InlineKeyboardButton(text=_t(lang, "btn_cancel"), callback_data="form_cancel")],
     ])
 
 
@@ -31,17 +32,21 @@ def get_experience_yn_keyboard(lang: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=_t(lang, "exp_yes"), callback_data="experience:yes"),
             InlineKeyboardButton(text=_t(lang, "exp_no"),  callback_data="experience:no"),
         ],
-        [InlineKeyboardButton(text=_t(lang, "form_cancel"), callback_data="form_cancel")],
+        [InlineKeyboardButton(text=_t(lang, "btn_cancel"), callback_data="form_cancel")],
     ])
 
 
 # ─── График работы ────────────────────────────────────────────────────────────
 
+# (lex_key, callback_data)
 _SCHEDULE_OPTIONS: list[tuple[str, str]] = [
-    ("schedule_full",  "schedule:full"),
-    ("schedule_part",  "schedule:part"),
-    ("schedule_shift", "schedule:shift"),
-    ("schedule_any",   "schedule:any"),
+    ("schedule_6_1",  "schedule:6_1"),
+    ("schedule_5_2",  "schedule:5_2"),
+    ("schedule_3_1",  "schedule:3_1"),
+    ("schedule_2_2",  "schedule:2_2"),
+    ("schedule_full", "schedule:full"),
+    ("schedule_flex", "schedule:flex"),
+    ("schedule_any",  "schedule:any"),
 ]
 
 def get_schedule_keyboard(lang: str) -> InlineKeyboardMarkup:
@@ -54,7 +59,7 @@ def get_schedule_keyboard(lang: str) -> InlineKeyboardMarkup:
             pair = []
     if pair:
         rows.append(pair)
-    rows.append([InlineKeyboardButton(text=_t(lang, "form_cancel"), callback_data="form_cancel")])
+    rows.append([InlineKeyboardButton(text=_t(lang, "btn_cancel"), callback_data="form_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -63,10 +68,11 @@ def get_schedule_keyboard(lang: str) -> InlineKeyboardMarkup:
 def get_evening_shifts_keyboard(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text=_t(lang, "evening_yes"), callback_data="evening:yes"),
-            InlineKeyboardButton(text=_t(lang, "evening_no"),  callback_data="evening:no"),
+            InlineKeyboardButton(text=_t(lang, "evening_yes"),       callback_data="evening:yes"),
+            InlineKeyboardButton(text=_t(lang, "evening_no"),        callback_data="evening:no"),
         ],
-        [InlineKeyboardButton(text=_t(lang, "form_cancel"), callback_data="form_cancel")],
+        [InlineKeyboardButton(text=_t(lang, "evening_agreement"),    callback_data="evening:agreement")],
+        [InlineKeyboardButton(text=_t(lang, "btn_cancel"),           callback_data="form_cancel")],
     ])
 
 
@@ -78,7 +84,8 @@ def get_weekends_keyboard(lang: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=_t(lang, "weekends_yes"), callback_data="weekends:yes"),
             InlineKeyboardButton(text=_t(lang, "weekends_no"),  callback_data="weekends:no"),
         ],
-        [InlineKeyboardButton(text=_t(lang, "form_cancel"), callback_data="form_cancel")],
+        [InlineKeyboardButton(text=_t(lang, "weekends_sometimes"), callback_data="weekends:sometimes")],
+        [InlineKeyboardButton(text=_t(lang, "btn_cancel"),         callback_data="form_cancel")],
     ])
 
 
@@ -87,11 +94,11 @@ def get_weekends_keyboard(lang: str) -> InlineKeyboardMarkup:
 def get_med_book_keyboard(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            # ВАЖНО: callback_data должен начинаться с "med_book:" — так ожидает хендлер
-            InlineKeyboardButton(text=_t(lang, "med_yes"), callback_data="med_book:yes"),
-            InlineKeyboardButton(text=_t(lang, "med_no"),  callback_data="med_book:no"),
+            InlineKeyboardButton(text=_t(lang, "med_book_yes"),         callback_data="med_book:yes"),
+            InlineKeyboardButton(text=_t(lang, "med_book_no"),          callback_data="med_book:no"),
         ],
-        [InlineKeyboardButton(text=_t(lang, "form_cancel"), callback_data="form_cancel")],
+        [InlineKeyboardButton(text=_t(lang, "med_book_in_progress"),    callback_data="med_book:in_progress")],
+        [InlineKeyboardButton(text=_t(lang, "btn_cancel"),              callback_data="form_cancel")],
     ])
 
 
@@ -103,7 +110,7 @@ def get_smoking_keyboard(lang: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=_t(lang, "smoking_yes"), callback_data="smoking:yes"),
             InlineKeyboardButton(text=_t(lang, "smoking_no"),  callback_data="smoking:no"),
         ],
-        [InlineKeyboardButton(text=_t(lang, "form_cancel"), callback_data="form_cancel")],
+        [InlineKeyboardButton(text=_t(lang, "btn_cancel"), callback_data="form_cancel")],
     ])
 
 
@@ -128,7 +135,7 @@ def get_positions_keyboard(lang: str, vacancies: list[dict]) -> InlineKeyboardMa
             pair = []
     if pair:
         rows.append(pair)
-    rows.append([InlineKeyboardButton(text=_t(lang, "form_cancel"), callback_data="form_cancel")])
+    rows.append([InlineKeyboardButton(text=_t(lang, "btn_cancel"), callback_data="form_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -171,7 +178,7 @@ def get_languages_keyboard(lang: str, selected: set[str]) -> InlineKeyboardMarku
         InlineKeyboardButton(text=_t(lang, "languages_done"), callback_data="lang_toggle:done"),
         InlineKeyboardButton(text=_t(lang, "btn_skip"),       callback_data="lang_toggle:skip"),
     ])
-    rows.append([InlineKeyboardButton(text=_t(lang, "form_cancel"), callback_data="form_cancel")])
+    rows.append([InlineKeyboardButton(text=_t(lang, "btn_cancel"), callback_data="form_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -180,7 +187,31 @@ def get_languages_keyboard(lang: str, selected: set[str]) -> InlineKeyboardMarku
 def get_confirmation_keyboard(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text=_t(lang, "confirm_send"),   callback_data="confirm:send"),
-            InlineKeyboardButton(text=_t(lang, "confirm_cancel"), callback_data="confirm:cancel"),
+            InlineKeyboardButton(text=_t(lang, "confirm_btn_yes"), callback_data="confirm:send"),
+            InlineKeyboardButton(text=_t(lang, "confirm_btn_no"),  callback_data="confirm:no"),
         ],
     ])
+
+
+# ─── Готовность к работе ──────────────────────────────────────────────────────
+
+_READINESS_OPTIONS: list[tuple[str, str]] = [
+    ("readiness_today",     "readiness:today"),
+    ("readiness_tomorrow",  "readiness:tomorrow"),
+    ("readiness_week",      "readiness:week"),
+    ("readiness_two_weeks", "readiness:two_weeks"),
+    ("readiness_month",     "readiness:month"),
+]
+
+def get_readiness_inline_keyboard(lang: str) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    pair: list[InlineKeyboardButton] = []
+    for lex_key, cb_data in _READINESS_OPTIONS:
+        pair.append(InlineKeyboardButton(text=_t(lang, lex_key), callback_data=cb_data))
+        if len(pair) == 2:
+            rows.append(pair)
+            pair = []
+    if pair:
+        rows.append(pair)
+    rows.append([InlineKeyboardButton(text=_t(lang, "btn_cancel"), callback_data="form_cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
