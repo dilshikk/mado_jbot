@@ -14,6 +14,8 @@ os.environ.setdefault("BOT_TOKEN", "test-token")
 os.environ.setdefault("ADMIN_IDS", "1")
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 
+from datetime import datetime, timedelta
+
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -21,7 +23,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from bot.db.base import Base
 from bot.db import requests as db
 from bot.db.models.application import Application
-
 
 @pytest_asyncio.fixture
 async def session() -> AsyncSession:
@@ -36,12 +37,10 @@ async def session() -> AsyncSession:
 
     await engine.dispose()
 
-
 async def _register(session: AsyncSession, user_id: int = 1) -> None:
     await db.register_user(
         session, user_id=user_id, username="alice", first_name="Alice", lang="ru"
     )
-
 
 @pytest.mark.asyncio
 async def test_save_application_creates_pending_application(session: AsyncSession) -> None:
@@ -61,7 +60,6 @@ async def test_save_application_creates_pending_application(session: AsyncSessio
     status = await db.get_application_status(session, user_id=1)
     assert status == "pending"
 
-
 @pytest.mark.asyncio
 async def test_get_application_status_returns_none_when_no_application(
     session: AsyncSession,
@@ -70,7 +68,6 @@ async def test_get_application_status_returns_none_when_no_application(
 
     status = await db.get_application_status(session, user_id=1)
     assert status is None
-
 
 @pytest.mark.asyncio
 async def test_update_application_status_updates_latest_application(
@@ -91,7 +88,6 @@ async def test_update_application_status_updates_latest_application(
     status = await db.get_application_status(session, user_id=1)
     assert status == "accepted"
 
-
 @pytest.mark.asyncio
 async def test_update_application_status_noop_when_no_application(
     session: AsyncSession,
@@ -103,7 +99,6 @@ async def test_update_application_status_noop_when_no_application(
 
     status = await db.get_application_status(session, user_id=1)
     assert status is None
-
 
 @pytest.mark.asyncio
 async def test_get_latest_application_returns_most_recent_submission(
@@ -128,27 +123,21 @@ async def test_get_latest_application_returns_most_recent_submission(
         position="Официант",
     )
 
-    # `created_at` has one-second resolution (see bot/db/requests.py `_now`),
-    # so two applications submitted within the same test can land on an
-    # identical timestamp. `get_latest_application` orders only by
-    # `created_at`, so a tie is broken arbitrarily by SQLite rather than by
-    # insertion order. Push the second submission's timestamp one second
-    # later to reflect it genuinely being the most recent one, exactly as
-    # would happen for two real submissions from the same candidate.
     second_app = await session.get(Application, second_id)
     assert second_app is not None
     first_app = await session.get(Application, first_id)
     assert first_app is not None
-    second_app.created_at = first_app.created_at[:-1] + str(
-        (int(first_app.created_at[-1]) + 1) % 10
-    )
+
+    # Сдвигаем created_at второй анкеты на 1 секунду вперёд через timedelta,
+    # чтобы гарантировать правильный порядок независимо от последней цифры.
+    dt = datetime.strptime(first_app.created_at, "%Y-%m-%d %H:%M:%S")
+    second_app.created_at = (dt + timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S")
     await session.commit()
 
     latest = await db.get_latest_application(session, user_id=1)
     assert latest is not None
     assert latest["id"] == second_id
     assert latest["position"] == "Официант"
-
 
 @pytest.mark.asyncio
 async def test_get_latest_application_returns_none_when_none_exist(
@@ -158,7 +147,6 @@ async def test_get_latest_application_returns_none_when_none_exist(
 
     latest = await db.get_latest_application(session, user_id=1)
     assert latest is None
-
 
 @pytest.mark.asyncio
 async def test_save_application_with_metro_station(session: AsyncSession) -> None:
@@ -180,7 +168,6 @@ async def test_save_application_with_metro_station(session: AsyncSession) -> Non
     latest = await db.get_latest_application(session, user_id=1)
     assert latest is not None
     assert latest["metro_station_id"] == station_id
-
 
 @pytest.mark.asyncio
 async def test_get_applications_by_status_filters_correctly(session: AsyncSession) -> None:
