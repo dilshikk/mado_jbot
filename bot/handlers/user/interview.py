@@ -8,7 +8,6 @@ from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.enums import ChatAction
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message,
@@ -20,8 +19,10 @@ from bot.ai.interview import get_next_step
 from bot.core.config import ADMIN_CHAT_ID
 from bot.db import requests as db
 from bot.filters.common import IsPrivateChat
+from bot import keyboards as kb
 from bot.locks import interview_lock
 from bot.states import Interview
+from bot.utils.formatters import build_hr_resume_text
 
 router = Router()
 router.message.filter(IsPrivateChat())
@@ -50,9 +51,7 @@ def _now() -> str:
 
 
 async def _typing_loop(chat_id: int, bot, stop: asyncio.Event) -> None:
-    """Луп обновления chat_action=typing до установки stop.
-    Видимо пользователю до тех пор, пока Cloudflare генерирует ответ.
-    """
+    """Луп обновления chat_action=typing до установки stop."""
     try:
         while not stop.is_set():
             await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
@@ -80,50 +79,92 @@ async def _get_next_step_with_typing(
         task.cancel()
 
 
-async def _send_hr_report(bot, session: AsyncSession, session_id: int, user_id: int) -> None:
-    """\u041e\u0442\u043f\u0440\u0430\u0432\u043b\u044f\u0435\u0442 \u0438\u0442\u043e\u0433\u043e\u0432\u044b\u0439 \u043e\u0442\u0447\u0451\u0442 \u0432 HR-\u0447\u0430\u0442."""
-    interview = await db.get_interview_session(session, session_id)
-    if not interview:
+async def _send_combined_hr_card(
+    bot,
+    session: AsyncSession,
+    session_id: int,
+    user_id: int,
+    form_data: dict,
+    lang: str,
+    user,
+) -> None:
+    """Отправляет в HR-чат объединённую карточку: анкета + AI-анализ.
+
+    Вызывается только после завершения AI-пайплайна.
+    """
+    if not ADMIN_CHAT_ID:
         return
 
-    app  = await db.get_latest_application(session, user_id)
-    name = (app or {}).get("name", f"user#{user_id}")
+    interview = await db.get_interview_session(session, session_id)
+    app = await db.get_latest_application(session, user_id)
 
-    header = (
-        f"🤖 AI-Отчёт по интервью \n"
-        f"{'─'*30}\n"
-        f"👤 {name} | user_id: {user_id} \n"
-        f"💼 {(app or {}).get('position', '—')}\n"
-        f"Вопросов задано: {interview['q_count']}\n"
-        f"{'─'*30}\n"
+    # ── Блок 1: анкета ────────────────────────────────────────────────────────
+    resume_block = build_hr_resume_text(form_data, lang, user)
+
+    # ── Блок 2: AI-анализ ─────────────────────────────────────────────────────
+    ai_block = ""
+    if interview:
+        summary = interview.get("report_summary") or ""
+        decision_raw = interview.get("report_decision")
+        decision_block = ""
+        if decision_raw:
+            try:
+                dec = json.loads(decision_raw)
+                total = dec.get("total_score", "—")
+                decision_key = dec.get("decision", "")
+                _labels = {
+                    "invite":  "✅ Пригласить",
+                    "review":  "⚠️ Рассмотреть",
+                    "reject":  "❌ Отклонить",
+                }
+                conf = dec.get("confidence", None)
+                conf_str = f" (уверенность: {conf:.0%})" if isinstance(conf, float) else ""
+                decision_block = (
+                    f"\n🏁 <b>Решение AI:</b> {_labels.get(decision_key, decision_key)}{conf_str}\n"
+                    f"⭐ <b>Балл:</b> {total}/10\n"
+                )
+            except Exception:
+                pass
+
+        q_count = interview.get("q_count", 0)
+        ai_block = (
+            f"\n{'─'*30}\n"
+            f"🤖 <b>AI-анализ интервью</b> (вопросов: {q_count})\n"
+            f"{'─'*30}\n"
+            f"{summary}"
+            f"{decision_block}"
+        )
+
+    full_text = resume_block + ai_block
+    if len(full_text) > 4096:
+        full_text = full_text[:4080] + "\n…(обрезано)"
+
+    # ── Отправка с кнопками HR-действий ──────────────────────────────────────
+    hr_kb = kb.get_hr_action_keyboard(
+        phone=form_data.get("phone", ""),
+        username=getattr(user, "username", "") or "",
+        candidate_id=user_id,
     )
 
-    summary      = interview.get("report_summary") or ""
-    decision_raw = interview.get("report_decision")
-    decision_block = ""
-    if decision_raw:
-        try:
-            dec          = json.loads(decision_raw)
-            total        = dec.get("total_score", "—")
-            decision_key = dec.get("decision", "")
-            _labels      = {"invite": "✅ Пригласить", "review": "⚠️ Рассмотреть", "reject": "❌ Отклонить"}
-            conf         = dec.get("confidence", None)
-            conf_str     = f" (уверенность: {conf:.0%})" if isinstance(conf, float) else ""
-            decision_block = (
-                f"\n 🏁 Решение: {_labels.get(decision_key, decision_key)} {conf_str}\n"
-                f"Балл: {total}/10 \n"
-            )
-        except Exception:
-            pass
-
-    full_text = header + summary + decision_block
-    if len(full_text) > 4000:
-        full_text = full_text[:3990] + "\n …(обрезано) "
-
     try:
-        await bot.send_message(chat_id=ADMIN_CHAT_ID, text=full_text, parse_mode="HTML")
-    except Exception as e:
-        logger.error("Ошибка отправки AI-отчёта в HR-чат: %s", e)
+        photo_id = form_data.get("photo_file_id")
+        if photo_id:
+            await bot.send_photo(
+                ADMIN_CHAT_ID,
+                photo=photo_id,
+                caption=full_text,
+                reply_markup=hr_kb,
+                parse_mode="HTML",
+            )
+        else:
+            await bot.send_message(
+                ADMIN_CHAT_ID,
+                text=full_text,
+                reply_markup=hr_kb,
+                parse_mode="HTML",
+            )
+    except Exception as exc:
+        logger.error("_send_combined_hr_card: ошибка отправки в HR-чат: %s", exc)
 
 
 async def start_interview(
@@ -133,7 +174,7 @@ async def start_interview(
     form_data: dict,
     lang: str,
 ) -> None:
-    """\u0417\u0430\u043f\u0443\u0441\u043a\u0430\u0435\u0442 \u0438\u043d\u0442\u0435\u0440\u0432\u044c\u044e \u2014 \u0432\u044b\u0437\u044b\u0432\u0430\u0435\u0442\u0441\u044f \u0438\u0437 form.py \u043f\u043e\u0441\u043b\u0435 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u044f \u0430\u043d\u043a\u0435\u0442\u044b."""
+    """Запускает интервью — вызывается из form.py после сохранения анкеты."""
     user_id    = message.from_user.id
     session_id = await db.create_interview_session(session, user_id)
 
@@ -143,7 +184,10 @@ async def start_interview(
     )
 
     if step.get("done"):
-        await _finish_interview(message, state, session, session_id, form_data, lang)
+        await _finish_interview(
+            message, state, session, session_id, form_data, lang,
+            user=message.from_user,
+        )
         return
 
     question = step["question"]
@@ -158,6 +202,11 @@ async def start_interview(
         interview_qa_log=[],
         interview_current_q=question,
         interview_asked_questions=[question.casefold()],
+        # сохраняем user для передачи в _finish_interview
+        interview_user_id=message.from_user.id,
+        interview_username=message.from_user.username,
+        interview_first_name=message.from_user.first_name,
+        interview_last_name=message.from_user.last_name,
     )
 
     intro = (
@@ -181,12 +230,11 @@ async def process_answer(message: Message, state: FSMContext, session: AsyncSess
     qa_log.append({"q": current_q, "a": (message.text or "").strip()})
     await db.append_qa(session, session_id, qa_log)
 
-    # Показываем анимацию «печатает» пока AI думает над следующим вопросом
     step     = await _get_next_step_with_typing(message.chat.id, message.bot, form_data, qa_log, lang)
     question = (step.get("question") or "").strip()
 
     if len(qa_log) >= MIN_QUESTIONS and (step.get("done") or not question):
-        await _finish_interview(message, state, session, session_id, form_data, lang, qa_log)
+        await _finish_interview(message, state, session, session_id, form_data, lang)
         return
 
     if not question:
@@ -223,12 +271,11 @@ async def skip_question(callback: CallbackQuery, state: FSMContext, session: Asy
     qa_log.append({"q": current_q, "a": skip_text})
     await db.append_qa(session, session_id, qa_log)
 
-    # Показываем анимацию «печатает» пока AI генерирует следующий вопрос
     step     = await _get_next_step_with_typing(callback.message.chat.id, callback.bot, form_data, qa_log, lang)
     question = (step.get("question") or "").strip()
 
     if len(qa_log) >= MIN_QUESTIONS and (step.get("done") or not question):
-        await _finish_interview(callback.message, state, session, session_id, form_data, lang, qa_log)
+        await _finish_interview(callback.message, state, session, session_id, form_data, lang)
         return
 
     if not question:
@@ -268,10 +315,22 @@ async def _finish_interview(
     form_data: dict,
     lang: str,
     qa_log: list[dict] | None = None,
+    user=None,
 ) -> None:
-    """\u0417\u0430\u0432\u0435\u0440\u0448\u0430\u0435\u0442 \u0438\u043d\u0442\u0435\u0440\u0432\u044c\u044e: \u0437\u0430\u043f\u0443\u0441\u043a\u0430\u0435\u0442 \u043f\u0430\u0439\u043f\u043b\u0430\u0439\u043d, \u0441\u043e\u0445\u0440\u0430\u043d\u044f\u0435\u0442, \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u044f\u0435\u0442 HR."""
+    """Завершает интервью: запускает AI-пайплайн, затем отправляет в HR объединённую карточку."""
     if qa_log is None:
         qa_log = []
+
+    # Восстанавливаем user из FSM, если не передан явно
+    if user is None:
+        user = message.from_user
+
+    # Получаем данные из FSM до очистки
+    fsm_data = await state.get_data()
+    if form_data is None or not form_data:
+        form_data = fsm_data.get("interview_form_data", {})
+    if not lang:
+        lang = fsm_data.get("interview_lang", "ru")
 
     await state.clear()
 
@@ -282,30 +341,34 @@ async def _finish_interview(
     )
     await message.answer(thanks, parse_mode="HTML")
 
-    user_id = message.from_user.id if message.from_user else message.chat.id
+    user_id = user.id if user else (message.from_user.id if message.from_user else message.chat.id)
 
-    # ── АТОМАРНОСТЬ: проверка + run_all_agents внутри interview_lock ──
+    # ── АТОМАРНОСТЬ: проверка + run_all_agents внутри interview_lock ──────────
     async with interview_lock(session_id):
         existing = await db.get_interview_session(session, session_id)
         if existing and existing.get("report_decision"):
+            # Отчёт уже готов (повторный вызов) — просто шлём карточку
             logger.info(
                 "_finish_interview: отчёт уже есть для session_id=%d user_id=%d",
                 session_id, user_id,
             )
-            await _send_hr_report(message.bot, session, session_id, user_id)
+            await _send_combined_hr_card(
+                message.bot, session, session_id, user_id, form_data, lang, user,
+            )
             return
 
-        # Уведомляем HR что идёт обработка
-        try:
-            app  = await db.get_latest_application(session, user_id)
-            name = (app or {}).get("name", f"user#{user_id}")
-            await message.bot.send_message(
-                chat_id=ADMIN_CHAT_ID,
-                text=f"⏳ AI обрабатывает интервью кандидата {name}...",
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
+        # Уведомляем HR что AI обрабатывает данные
+        if ADMIN_CHAT_ID:
+            try:
+                app  = await db.get_latest_application(session, user_id)
+                name = (app or {}).get("name", f"user#{user_id}")
+                await message.bot.send_message(
+                    chat_id=ADMIN_CHAT_ID,
+                    text=f"⏳ AI обрабатывает интервью кандидата <b>{name}</b>...",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
 
         logger.info(
             "_finish_interview: запуск AI-пайплайна user_id=%d session_id=%d qa_count=%d",
@@ -314,8 +377,8 @@ async def _finish_interview(
 
         try:
             reports = await run_all_agents(form_data, qa_log)
-        except Exception as e:
-            logger.error("_finish_interview: AI-пайплайн упал: %s", e, exc_info=True)
+        except Exception as exc:
+            logger.error("_finish_interview: AI-пайплайн упал: %s", exc, exc_info=True)
             await db.update_application_status(session, user_id, "interview_failed")
             return
 
@@ -333,8 +396,10 @@ async def _finish_interview(
         )
         await db.update_application_status(session, user_id, "screened")
 
-    # _send_hr_report — чистое чтение, вынесено за лок
-    await _send_hr_report(message.bot, session, session_id, user_id)
+    # Отправляем объединённую карточку (анкета + AI-анализ) в HR-чат
+    await _send_combined_hr_card(
+        message.bot, session, session_id, user_id, form_data, lang, user,
+    )
 
 
 def _fallback_question(lang: str, qa_log: list[dict], asked_questions: list[str]) -> str:
