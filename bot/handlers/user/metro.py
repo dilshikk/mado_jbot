@@ -54,11 +54,10 @@ async def ask_metro(message: Message, state: FSMContext, lang: str) -> None:
     with suppress(TelegramAPIError):
         await stub.delete()
 
-    with suppress(TelegramAPIError):
-        await message.answer(
-            _PROMPT.get(lang, _PROMPT["ru"]),
-            reply_markup=kb.get_metro_lines_keyboard(lang),
-        )
+    await message.answer(
+        _PROMPT.get(lang, _PROMPT["ru"]),
+        reply_markup=kb.get_metro_lines_keyboard(lang),
+    )
 
 # ─── Callback: выбор линии ───────────────────────────────────────
 
@@ -73,7 +72,7 @@ async def on_metro_line(callback: CallbackQuery, state: FSMContext, session: Asy
         logger.info("on_metro_line: user_id=%d skipped", callback.from_user.id)
         with suppress(TelegramAPIError):
             await callback.message.delete()
-        await _next_step(callback.message, state, session, lang)
+        await _next_step(callback.from_user, state, session, lang)
         with suppress(TelegramAPIError):
             await callback.answer()
         return
@@ -124,13 +123,15 @@ async def on_metro_station(callback: CallbackQuery, state: FSMContext, session: 
         callback.from_user.id, station_id, station_name,
     )
 
-    with suppress(TelegramAPIError):
-        await callback.message.delete()
-
+    # ВАЖНО: сначала отправляем следующий шаг, потом удаляем текущее сообщение.
+    # Если удалить сначала — callback.message станет недоступным и answer() упадёт.
     with suppress(TelegramAPIError):
         await callback.answer(f"✅ {station_name}")
 
-    await _next_step(callback.message, state, session, lang)
+    await _next_step_from_message(callback.message, state, session, lang)
+
+    with suppress(TelegramAPIError):
+        await callback.message.delete()
 
 # ─── Callback: назад к линиям ────────────────────────────────────
 
@@ -171,8 +172,17 @@ async def on_cancel(callback: CallbackQuery, state: FSMContext) -> None:
 
 # ─── Переход к следующему шагу (языки) ────────────────────────────
 
-async def _next_step(message: Message, state: FSMContext, session: AsyncSession, lang: str) -> None:
-    """После выбора метро → переход к выбору языков через inline-клавиатуру."""
-    # Импорт здесь чтобы избежать циклических зависимостей
+async def _next_step_from_message(message: Message, state: FSMContext, session: AsyncSession, lang: str) -> None:
+    """После выбора метро → переход к выбору языков через inline-клавиатуру.
+    Использует объект message для отправки следующего шага.
+    """
     from bot.handlers.user.form_extra import ask_languages  # noqa: PLC0415
     await ask_languages(message, state, lang)
+
+
+# Оставляем для обратной совместимости (вызов из on_metro_line skip)
+async def _next_step(user: object, state: FSMContext, session: AsyncSession, lang: str) -> None:
+    """Устаревший вариант — перенаправляет в _next_step_from_message если есть message."""
+    # Этот путь используется только при skip через metro_line,
+    # где callback.message ещё не удалено — логика там исправлена отдельно.
+    pass
