@@ -34,6 +34,24 @@ def get_main_menu(lang: str) -> ReplyKeyboardMarkup:
         resize_keyboard=True,
     )
 
+# ── Главное меню администратора (Reply) ───────────────────────────────────────
+
+def get_admin_menu_keyboard() -> ReplyKeyboardMarkup:
+    """Reply-клавиатура главного меню /admin.
+
+    Отображается постоянно в поле ввода.
+    Разделы открываются через Inline (edit_text).
+    """
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📢 Рассылка"),     KeyboardButton(text="💼 Вакансии")],
+            [KeyboardButton(text="🚇 Станции метро"), KeyboardButton(text="📊 Дашборд")],
+            [KeyboardButton(text="👮 Список админов"), KeyboardButton(text="📋 Resend")],
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Выберите раздел...",
+    )
+
 def get_cancel_keyboard(lang: str) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[_row(_btn(lang, "btn_cancel", "❌ Отменить заполнение"))],
@@ -271,11 +289,7 @@ def get_metro_keyboard(lang: str) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 def get_interview_keyboard(lang: str) -> ReplyKeyboardMarkup:
-    """Клавиатура во время AI-интервью.
-
-    Заменяет главное меню — кандидат видит только эти две кнопки.
-    После завершения интервью нужно вернуть get_main_menu().
-    """
+    """Клавиатура во время AI-интервью."""
     if lang == "uz":
         return ReplyKeyboardMarkup(
             keyboard=[
