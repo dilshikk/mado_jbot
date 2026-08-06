@@ -2,14 +2,10 @@ from bot.keyboards.reply import (
     # Утилита
     remove_keyboard,
     # Пользовательские
-    get_branch_keyboard,
     get_cancel_keyboard,
-    get_citizenship_keyboard,
-    get_experience_keyboard,
     get_interview_keyboard,
     get_language_keyboard,
     get_main_menu,
-    get_metro_keyboard,
     get_phone_keyboard,
     get_skip_cancel_keyboard,
     # Административные
@@ -22,10 +18,6 @@ from bot.keyboards.reply import (
     get_broadcast_photo_kb,
     get_broadcast_url_kb,
     get_broadcast_preview_kb,
-    get_admin_vacancies_kb,
-    get_admin_vacancy_item_kb,
-    get_admin_vacancy_confirm_delete_kb,
-    get_admin_vacancy_edit_kb,
     get_admin_metro_lines_kb,
     get_admin_metro_stations_kb,
     get_admin_station_item_kb,
@@ -57,17 +49,13 @@ __all__ = [
     # Утилита
     "remove_keyboard",
     # Пользовательские Reply
-    "get_branch_keyboard",
     "get_cancel_keyboard",
-    "get_citizenship_keyboard",
-    "get_experience_keyboard",
     "get_interview_keyboard",
     "get_language_keyboard",
     "get_main_menu",
-    "get_metro_keyboard",
     "get_phone_keyboard",
     "get_skip_cancel_keyboard",
-    # Административные Reply (экранный стек)
+    # Административные Reply
     "ADMIN_BTN_BACK",
     "ADMIN_BTN_CANCEL",
     "get_admin_menu_keyboard",
@@ -77,10 +65,6 @@ __all__ = [
     "get_broadcast_photo_kb",
     "get_broadcast_url_kb",
     "get_broadcast_preview_kb",
-    "get_admin_vacancies_kb",
-    "get_admin_vacancy_item_kb",
-    "get_admin_vacancy_confirm_delete_kb",
-    "get_admin_vacancy_edit_kb",
     "get_admin_metro_lines_kb",
     "get_admin_metro_stations_kb",
     "get_admin_station_item_kb",
