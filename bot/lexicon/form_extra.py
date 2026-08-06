@@ -242,3 +242,8 @@ EXTRA_UZ = {
         "Minimal <b>{min_duration} soniya</b> kerak. Qayta urinib ko'ring."
     ),
 }
+
+FORM_EXTRA_TEXTS = {
+    "ru": EXTRA_RU,
+    "uz": EXTRA_UZ,
+}
