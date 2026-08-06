@@ -1,19 +1,10 @@
 # bot/handlers/admin/metro_stations.py
-"""FSM для управления списком станций метро.
-
-Команда /metro_stations (или кнопка в /admin меню).
-
-Возможности:
-- Просмотр всех станций по линиям
-- Добавить станцию (name_ru + name_uz + линия)
-- Включить / выключить станцию (active)
-- Удалить станцию
-"""
+"""FSM для управления списком станций метро."""
 
 import logging
 
 from aiogram import F, Router
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramAPIError
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -34,7 +25,6 @@ logger = logging.getLogger(__name__)
 # ── Линии метро ───────────────────────────────────────────────────────────────
 
 LINES: dict[str, tuple[str, str, str]] = {
-    # key: (emoji, name_ru, name_uz)
     "red":    ("🔴", "Чиланзарская",               "Chilonzor liniyasi"),
     "green":  ("🟢", "Юнусабадская",               "Yunusobod liniyasi"),
     "blue":   ("🔵", "Узбекистанская",              "O'zbekiston liniyasi"),
@@ -61,6 +51,7 @@ def _lines_keyboard() -> InlineKeyboardMarkup:
         )])
     rows.append([InlineKeyboardButton(text="➕ Добавить станцию", callback_data="ms:add")])
     rows.append([InlineKeyboardButton(text="🔄 Обновить",         callback_data="ms:refresh")])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад",            callback_data="admin:menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -147,22 +138,30 @@ async def _refresh_line_view(
 
 # ── Точка входа ───────────────────────────────────────────────────────────────
 
-async def show_metro_menu(message: Message, session: AsyncSession) -> None:
-    """Вызывается из /admin-меню и команды /metro_stations."""
+async def show_metro_menu(message: Message, session: AsyncSession, edit: bool = False) -> None:
+    """Вызывается из /admin-меню и команды /metro_stations.
+
+    edit=True → редактирует текущее сообщение (для inline-навигации из /admin).
+    edit=False → отправляет новое сообщение (для команды /metro_stations).
+    """
     total  = await db.count_metro_stations(session)
     active = await db.count_metro_stations(session, active_only=True)
-    await message.answer(
-        _metro_menu_text(total, active),
-        parse_mode="HTML",
-        reply_markup=_lines_keyboard(),
-    )
+    text   = _metro_menu_text(total, active)
+    kb     = _lines_keyboard()
+    if edit:
+        try:
+            await message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except TelegramAPIError:
+            await message.answer(text, parse_mode="HTML", reply_markup=kb)
+    else:
+        await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 @router.message(Command("metro_stations"))
 async def cmd_metro_stations(message: Message, session: AsyncSession) -> None:
     if not _is_admin(message.from_user.id):
         return
-    await show_metro_menu(message, session)
+    await show_metro_menu(message, session, edit=False)
 
 
 # ── Просмотр станций линии ────────────────────────────────────────────────────
@@ -182,20 +181,7 @@ async def ms_back(callback: CallbackQuery, session: AsyncSession) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer()
         return
-    total  = await db.count_metro_stations(session)
-    active = await db.count_metro_stations(session, active_only=True)
-    try:
-        await callback.message.edit_text(
-            _metro_menu_text(total, active),
-            parse_mode="HTML",
-            reply_markup=_lines_keyboard(),
-        )
-    except TelegramBadRequest:
-        await callback.message.answer(
-            _metro_menu_text(total, active),
-            parse_mode="HTML",
-            reply_markup=_lines_keyboard(),
-        )
+    await show_metro_menu(callback.message, session, edit=True)
     await callback.answer()
 
 
@@ -205,20 +191,7 @@ async def ms_refresh(callback: CallbackQuery, state: FSMContext, session: AsyncS
         await callback.answer()
         return
     await state.clear()
-    total  = await db.count_metro_stations(session)
-    active = await db.count_metro_stations(session, active_only=True)
-    try:
-        await callback.message.edit_text(
-            _metro_menu_text(total, active),
-            parse_mode="HTML",
-            reply_markup=_lines_keyboard(),
-        )
-    except TelegramBadRequest:
-        await callback.message.answer(
-            _metro_menu_text(total, active),
-            parse_mode="HTML",
-            reply_markup=_lines_keyboard(),
-        )
+    await show_metro_menu(callback.message, session, edit=True)
     await callback.answer("✅ Обновлено")
 
 
@@ -312,16 +285,25 @@ async def ms_add_got_line(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(new_station_line=line)
     await state.set_state(AddStation.waiting_name_ru)
     emoji, name_ru, _ = LINES.get(line, ("", line, ""))
-    # Сохраняем chat_id до отправки, чтобы использовать в message-хендлерах
     chat_id = callback.message.chat.id
-    sent = await callback.message.answer(
-        f"➕ <b>Новая станция</b> | {emoji} {name_ru}\n\n"
-        f"<b>Шаг 2/3.</b> Введите название на <b>русском</b>:\n"
-        f"Например: <code>Алмазар</code>",
-        parse_mode="HTML",
-        reply_markup=_cancel_keyboard(),
-    )
-    await state.update_data(wizard_msg_id=sent.message_id, wizard_chat_id=chat_id)
+    try:
+        await callback.message.edit_text(
+            f"➕ <b>Новая станция</b> | {emoji} {name_ru}\n\n"
+            f"<b>Шаг 2/3.</b> Введите название на <b>русском</b>:\n"
+            f"Например: <code>Алмазар</code>",
+            parse_mode="HTML",
+            reply_markup=_cancel_keyboard(),
+        )
+        await state.update_data(wizard_msg_id=callback.message.message_id, wizard_chat_id=chat_id)
+    except TelegramBadRequest:
+        sent = await callback.message.answer(
+            f"➕ <b>Новая станция</b> | {emoji} {name_ru}\n\n"
+            f"<b>Шаг 2/3.</b> Введите название на <b>русском</b>:\n"
+            f"Например: <code>Алмазар</code>",
+            parse_mode="HTML",
+            reply_markup=_cancel_keyboard(),
+        )
+        await state.update_data(wizard_msg_id=sent.message_id, wizard_chat_id=chat_id)
     await callback.answer()
 
 
@@ -384,19 +366,38 @@ async def ms_got_name_uz(message: Message, state: FSMContext, session: AsyncSess
         await message.delete()
     except TelegramBadRequest:
         pass
+
+    emoji, line_name_ru, _ = LINES.get(line, ("", line, ""))
+    result_text = (
+        f"✅ <b>Станция добавлена!</b>\n\n"
+        f"🚇 {name_ru} / {text}\n"
+        f"{emoji} Линия: {line_name_ru}"
+    )
+
+    # Редактируем визард в результат с кнопкой возврата
     if wid:
         try:
-            await message.bot.delete_message(chat_id=chat_id, message_id=wid)
+            await message.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=wid,
+                text=result_text,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text="⬅️ К станциям метро", callback_data="ms:refresh"),
+                ]]),
+            )
+            return
         except TelegramBadRequest:
             pass
 
-    emoji, line_name_ru, _ = LINES.get(line, ("", line, ""))
-    await message.answer(
-        f"✅ <b>Станция добавлена!</b>\n\n"
-        f"🚇 {name_ru} / {text}\n"
-        f"{emoji} Линия: {line_name_ru}\n\n"
-        f"Используйте /metro_stations для управления.",
+    # Fallback
+    total  = await db.count_metro_stations(session)
+    active = await db.count_metro_stations(session, active_only=True)
+    await message.bot.send_message(
+        chat_id=chat_id,
+        text=_metro_menu_text(total, active),
         parse_mode="HTML",
+        reply_markup=_lines_keyboard(),
     )
 
 
@@ -407,21 +408,4 @@ async def ms_add_cancel(callback: CallbackQuery, state: FSMContext, session: Asy
         return
     await state.clear()
     await callback.answer("Добавление отменено")
-
-    # Сохраняем chat_id ДО удаления сообщения
-    chat_id = callback.message.chat.id
-
-    try:
-        await callback.message.delete()
-    except TelegramBadRequest:
-        pass
-
-    # Используем bot.send_message, чтобы не обращаться к удалённому message
-    total  = await db.count_metro_stations(session)
-    active = await db.count_metro_stations(session, active_only=True)
-    await callback.bot.send_message(
-        chat_id=chat_id,
-        text=_metro_menu_text(total, active),
-        parse_mode="HTML",
-        reply_markup=_lines_keyboard(),
-    )
+    await show_metro_menu(callback.message, session, edit=True)
