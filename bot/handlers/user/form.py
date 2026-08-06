@@ -3,12 +3,14 @@
 import asyncio
 import logging
 import re
+from contextlib import suppress
 from datetime import datetime
 
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.core.config import ADMIN_CHAT_ID, ADMIN_IDS
@@ -24,6 +26,7 @@ from bot.utils.formatters import build_hr_resume_text, build_resume_text
 
 router = Router()
 router.message.filter(IsPrivateChat())
+router.callback_query.filter(IsPrivateChat())
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +49,6 @@ _FORM_ACTIVE_STATES = (
     Form.waiting_photo, Form.waiting_video, Form.waiting_confirmation,
 )
 
-
 def _valid_position_labels(vacancies: list[dict]) -> set[str]:
     labels: set[str] = set()
     for v in vacancies:
@@ -57,7 +59,6 @@ def _valid_position_labels(vacancies: list[dict]) -> set[str]:
                 labels.add(f"{emoji} {name}".strip())
                 labels.add(name)
     return labels
-
 
 def _is_valid_full_name(text: str) -> bool:
     """Проверяет ФИО: минимум два слова, без цифр и служебных символов.
@@ -75,8 +76,10 @@ def _is_valid_full_name(text: str) -> bool:
     if len(words) < 2:
         return False
     # Каждое слово — минимум 2 буквы
-    return all(len(w) >= 2 and all(ch.isalpha() or ch in "'’." for ch in w) for w in words)
+    return all(len(w) >= 2 and all(ch.isalpha() or ch in "''." for ch in w) for w in words)
 
+
+# ─── Отмена анкеты — Message (кнопка Reply или /cancel) ──────────────────────
 
 @router.message(StateFilter(*_FORM_ACTIVE_STATES), IsCancelMessage())
 @router.message(StateFilter(*_FORM_ACTIVE_STATES), Command("cancel"))
@@ -86,6 +89,26 @@ async def cancel_form(message: Message, state: FSMContext, lang: str) -> None:
     await state.update_data(lang=lang)
     await message.answer(LOCALIZATION[lang]["anketa_cancelled"], reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
 
+
+# ─── Отмена анкеты — Callback (inline-кнопки форм) ───────────────────────────
+
+@router.callback_query(StateFilter(*_FORM_ACTIVE_STATES), F.data == "form_cancel")
+async def cancel_form_callback(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
+    """Отмена анкеты с inline-кнопки «Отменить заполнение»."""
+    await state.clear()
+    await state.update_data(lang=lang)
+    with suppress(TelegramAPIError):
+        await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(
+        LOCALIZATION[lang]["anketa_cancelled"],
+        reply_markup=kb.get_main_menu(lang),
+        parse_mode="HTML",
+    )
+    with suppress(TelegramAPIError):
+        await callback.answer()
+
+
+# ─── Старт анкеты ─────────────────────────────────────────────────────────────
 
 @router.message(F.text.in_(["📝 Заполнить анкету", "📝 Anketani to'ldirish"]))
 async def start_anketa(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
@@ -117,14 +140,16 @@ async def start_anketa(message: Message, state: FSMContext, lang: str, session: 
     await state.set_state(Form.waiting_name)
 
 
+# ─── Шаг: Имя ─────────────────────────────────────────────────────────────────
+
 @router.message(Form.waiting_name)
 async def process_name(message: Message, state: FSMContext, lang: str) -> None:
     text = (message.text or "").strip()
     if not _is_valid_full_name(text):
         hint = (
-            "❌ Введите ваше настоящее ФИО полностью, например: <b>Иванов Иван Иванович</b>"
+            "❌ Введите ваше настоящее ФИО полностью, например: Иванов Иван Иванович "
             if lang == "ru" else
-            "❌ To'liq ism-familiyangizni kiriting, masalan: <b>Aliyev Ali Alievich</b>"
+            "❌ To'liq ism-familiyangizni kiriting, masalan: Aliyev Ali Alievich "
         )
         await message.answer(LOCALIZATION[lang].get("bad_name") or hint, parse_mode="HTML")
         return
@@ -132,6 +157,8 @@ async def process_name(message: Message, state: FSMContext, lang: str) -> None:
     await message.answer(LOCALIZATION[lang]["ask_birthday"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_birthday)
 
+
+# ─── Шаг: Дата рождения ────────────────────────────────────────────────────────
 
 @router.message(Form.waiting_birthday)
 async def process_birthday(message: Message, state: FSMContext, lang: str) -> None:
@@ -152,19 +179,35 @@ async def process_birthday(message: Message, state: FSMContext, lang: str) -> No
         )
         return
     await state.update_data(birthday=text)
-    await message.answer(LOCALIZATION[lang]["ask_gender"], reply_markup=kb.get_gender_keyboard(lang), parse_mode="HTML")
+    # ── Inline-клавиатура выбора пола ──
+    await message.answer(
+        LOCALIZATION[lang]["ask_gender"],
+        reply_markup=kb.get_gender_inline_keyboard(lang),
+        parse_mode="HTML",
+    )
     await state.set_state(Form.waiting_gender)
 
 
-@router.message(Form.waiting_gender)
-async def process_gender(message: Message, state: FSMContext, lang: str) -> None:
-    if message.text not in {LOCALIZATION[lang]["gender_male"], LOCALIZATION[lang]["gender_female"]}:
-        await message.answer(LOCALIZATION[lang]["ask_gender"], reply_markup=kb.get_gender_keyboard(lang), parse_mode="HTML")
-        return
-    await state.update_data(gender=message.text)
-    await message.answer(LOCALIZATION[lang]["ask_phone"], reply_markup=kb.get_phone_keyboard(lang), parse_mode="HTML")
+# ─── Шаг: Пол (Inline CallbackQuery) ─────────────────────────────────────────
+
+@router.callback_query(Form.waiting_gender, F.data.startswith("gender:"))
+async def process_gender(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
+    await callback.answer()
+    gender_key = callback.data.split(":")[1]  # "male" or "female"
+    t = LOCALIZATION[lang]
+    gender_text = t["gender_male"] if gender_key == "male" else t["gender_female"]
+    await state.update_data(gender=gender_text)
+    with suppress(TelegramAPIError):
+        await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(
+        LOCALIZATION[lang]["ask_phone"],
+        reply_markup=kb.get_phone_keyboard(lang),
+        parse_mode="HTML",
+    )
     await state.set_state(Form.waiting_phone)
 
+
+# ─── Шаг: Телефон ────────────────────────────────────────────────────────────
 
 @router.message(Form.waiting_phone)
 async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
@@ -180,22 +223,35 @@ async def process_phone(message: Message, state: FSMContext, lang: str) -> None:
     await ask_metro(message, state, lang)
 
 
-@router.message(Form.waiting_position)
-async def process_position(message: Message, state: FSMContext, lang: str, session: AsyncSession) -> None:
-    vacancies = await db.get_active_vacancies(session)
-    valid = _valid_position_labels(vacancies)
-    chosen = (message.text or "").strip()
-    if chosen not in valid:
-        await message.answer(
-            LOCALIZATION[lang]["ask_position"],
-            reply_markup=kb.get_positions_keyboard(lang, vacancies),
-            parse_mode="HTML",
+# ─── Шаг: Вакансия (Inline CallbackQuery) ────────────────────────────────────
+
+@router.callback_query(Form.waiting_position, F.data.startswith("position:"))
+async def process_position(callback: CallbackQuery, state: FSMContext, lang: str, session: AsyncSession) -> None:
+    await callback.answer()
+    vacancy_id = int(callback.data.split(":")[1])
+    vacancy = await db.get_vacancy_by_id(session, vacancy_id)
+    if not vacancy:
+        await callback.answer(
+            "Вакансия не найдена" if lang == "ru" else "Vakansiya topilmadi",
+            show_alert=True,
         )
         return
-    await state.update_data(position=chosen)
-    await message.answer(LOCALIZATION[lang]["ask_readiness"], reply_markup=kb.get_readiness_keyboard(lang), parse_mode="HTML")
+    name_key = "name_ru" if lang == "ru" else "name_uz"
+    emoji = (vacancy.get("emoji") or "").strip()
+    name = (vacancy.get(name_key) or "").strip()
+    position_label = f"{emoji} {name}".strip() if emoji else name
+    await state.update_data(position=position_label, position_id=vacancy_id)
+    with suppress(TelegramAPIError):
+        await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(
+        LOCALIZATION[lang]["ask_readiness"],
+        reply_markup=kb.get_readiness_keyboard(lang),
+        parse_mode="HTML",
+    )
     await state.set_state(Form.waiting_readiness)
 
+
+# ─── Шаг: Видео → переход к подтверждению ────────────────────────────────────
 
 @router.message(Form.waiting_video)
 async def process_video(message: Message, state: FSMContext, lang: str) -> None:
@@ -220,29 +276,41 @@ async def process_video(message: Message, state: FSMContext, lang: str) -> None:
         await state.update_data(video_file_id=file_id, is_video_note=is_note, video_duration=duration)
     data = await state.get_data()
     summary = build_resume_text(data, lang)
-    await message.answer(summary, reply_markup=kb.get_confirmation_keyboard(lang), parse_mode="HTML")
+    # ── Inline-клавиатура подтверждения (без reply-кнопок) ──
+    await message.answer(summary, reply_markup=kb.get_confirmation_inline_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_confirmation)
 
 
-@router.message(Form.waiting_confirmation)
-async def process_confirmation(
-    message: Message,
+# ─── Шаг: Подтверждение (Inline CallbackQuery) ────────────────────────────────
+
+@router.callback_query(Form.waiting_confirmation, F.data == "confirm:no")
+async def process_confirmation_no(
+    callback: CallbackQuery,
     state: FSMContext,
     lang: str,
     session: AsyncSession,
 ) -> None:
+    await callback.answer()
+    with suppress(TelegramAPIError):
+        await callback.message.edit_reply_markup(reply_markup=None)
+    await state.clear()
+    await state.update_data(lang=lang)
+    await start_anketa(callback.message, state, lang, session)
+
+
+@router.callback_query(Form.waiting_confirmation, F.data == "confirm:yes")
+async def process_confirmation_yes(
+    callback: CallbackQuery,
+    state: FSMContext,
+    lang: str,
+    session: AsyncSession,
+    bot: Bot,
+) -> None:
+    await callback.answer()
+    with suppress(TelegramAPIError):
+        await callback.message.edit_reply_markup(reply_markup=None)
     data = await state.get_data()
-
-    if message.text in {LOCALIZATION["ru"]["confirm_btn_no"], LOCALIZATION["uz"]["confirm_btn_no"]}:
-        await state.clear()
-        await state.update_data(lang=lang)
-        await start_anketa(message, state, lang, session)
-        return
-
-    if message.text not in {LOCALIZATION["ru"]["confirm_btn_yes"], LOCALIZATION["uz"]["confirm_btn_yes"]}:
-        return
-
-    user = message.from_user
+    user = callback.from_user
 
     is_admin = user.id in ADMIN_IDS
     if not is_admin:
@@ -251,11 +319,11 @@ async def process_confirmation(
             if status in BLOCKING_STATUSES:
                 key = f"anketa_block_{status}"
                 block_text = LOCALIZATION[lang].get(key) or LOCALIZATION[lang]["anketa_block_pending"]
-                await message.answer(block_text, parse_mode="HTML")
+                await callback.message.answer(block_text, parse_mode="HTML")
                 return
-            await _do_save_application(message, state, session, lang, data, user)
+            await _do_save_application(callback.message, state, session, lang, data, user, bot)
     else:
-        await _do_save_application(message, state, session, lang, data, user)
+        await _do_save_application(callback.message, state, session, lang, data, user, bot)
 
 
 async def _do_save_application(
@@ -265,92 +333,87 @@ async def _do_save_application(
     lang: str,
     data: dict,
     user,
+    bot: Bot | None = None,
 ) -> None:
-    """Сохраняет анкету в БД, отправляет HR, затем запускает AI-интервью."""
-    bot: Bot = message.bot
-
-    # Реальная сигнатура: save_application(session, user_id, name, birthday, phone, position, experience)
-    application_id = await db.save_application(
+    """Сохраняет анкету в БД и уведомляет HR."""
+    app_id = await db.save_application(
         session,
         user_id=user.id,
         name=data.get("name", ""),
         birthday=data.get("birthday", ""),
         phone=data.get("phone", ""),
         position=data.get("position", ""),
-        experience=data.get("experience", "—"),
+        gender=data.get("gender"),
+        branch=data.get("branch"),
+        metro_station_id=data.get("metro_station_id"),
+        languages=data.get("languages"),
+        readiness=data.get("readiness"),
+        experience=data.get("experience"),
+        exp_company=data.get("exp_company"),
+        exp_position=data.get("exp_position"),
+        exp_duration=data.get("exp_duration"),
+        exp_duties=data.get("exp_duties"),
+        salary=data.get("salary"),
+        schedule=data.get("schedule"),
+        evening_shifts=data.get("evening_shifts"),
+        weekends=data.get("weekends"),
+        smoking=data.get("smoking"),
+        med_book=data.get("med_book"),
+        photo_file_id=data.get("photo_file_id"),
+        video_file_id=data.get("video_file_id"),
+        is_video_note=data.get("is_video_note", False),
+        video_duration=data.get("video_duration", 0),
+        username=user.username,
+        telegram_id=user.id,
+        first_name=user.first_name,
+        last_name=user.last_name,
     )
 
-    confirm_text = LOCALIZATION[lang]["anketa_confirmed"]
     await state.clear()
     await state.update_data(lang=lang)
-    # Убираем reply-клавиатуру: во время интервью используются inline-кнопки,
-    # иначе нажатие кнопки меню будет воспринято как ответ на вопрос AI.
-    await message.answer(confirm_text, reply_markup=kb.remove_keyboard(), parse_mode="HTML")
+    await message.answer(
+        LOCALIZATION[lang]["anketa_done"],
+        reply_markup=kb.get_main_menu(lang),
+        parse_mode="HTML",
+    )
 
-    # HR-сообщение, Google Sheets и предварительный AI-скрининг — в фоне,
-    # чтобы кандидат не ждал перед первым вопросом интервью.
-    asyncio.create_task(_post_confirm_tasks(bot, session, user, data, application_id, lang))
+    if not ADMIN_CHAT_ID or not bot:
+        return
 
-    # ── Запуск AI-интервью ──
-    from bot.handlers.user.interview import start_interview  # noqa: PLC0415
+    resume_text = build_hr_resume_text(data, lang, user)
     try:
-        await start_interview(message, state, session, data, lang)
-    except Exception as e:
-        logger.error("Не удалось запустить AI-интервью: %s", e, exc_info=True)
-        await state.clear()
-        await state.update_data(lang=lang)
-        fallback = (
-            "Ваша анкета принята. HR-менеджер свяжется с вами в ближайшее время."
-            if lang == "ru" else
-            "Anketangiz qabul qilindi. HR-menejer tez orada siz bilan bog'lanadi."
-        )
-        await message.answer(fallback, reply_markup=kb.get_main_menu(lang), parse_mode="HTML")
-
-
-async def _post_confirm_tasks(
-    bot: Bot,
-    session: AsyncSession,
-    user,
-    data: dict,
-    application_id: int,
-    lang: str,
-) -> None:
-    """Фоновые задачи после подтверждения анкеты: HR-сообщение, таблица, AI-скрининг."""
-
-    # ── 1. Отправка резюме в HR-чат ──
-    # Реальная сигнатура: build_hr_resume_text(data, user_id, username)
-    try:
-        username_str = user.username or ""
-        resume_text = build_hr_resume_text(data, user.id, username_str)
-        await bot.send_message(ADMIN_CHAT_ID, resume_text, parse_mode="HTML")
         if data.get("photo_file_id"):
-            await bot.send_photo(ADMIN_CHAT_ID, data["photo_file_id"])
-        if data.get("video_file_id"):
-            send_fn = bot.send_video_note if data.get("is_video_note") else bot.send_video
-            await send_fn(ADMIN_CHAT_ID, data["video_file_id"])
-    except Exception as e:
-        logger.error("Ошибка отправки резюме в HR-чат: %s", e, exc_info=True)
+            await bot.send_photo(
+                ADMIN_CHAT_ID,
+                photo=data["photo_file_id"],
+                caption=resume_text,
+                reply_markup=kb.get_hr_action_keyboard(
+                    phone=data.get("phone", ""),
+                    username=user.username or "",
+                    candidate_id=user.id,
+                ),
+                parse_mode="HTML",
+            )
+        else:
+            await bot.send_message(
+                ADMIN_CHAT_ID,
+                text=resume_text,
+                reply_markup=kb.get_hr_action_keyboard(
+                    phone=data.get("phone", ""),
+                    username=user.username or "",
+                    candidate_id=user.id,
+                ),
+                parse_mode="HTML",
+            )
+    except TelegramAPIError as exc:
+        logger.error("_do_save_application: failed to notify HR: %s", exc)
 
-    # ── 2. Google Sheets ──
-    # Реальная сигнатура: append_to_sheet(data: list)
+    # Отправляем в Google Sheets и запускаем AI-скрининг
     try:
-        sheet_row = [
-            data.get("name", ""),
-            data.get("birthday", ""),
-            data.get("gender", ""),
-            data.get("phone", ""),
-            data.get("position", ""),
-            data.get("experience", ""),
-            data.get("address", ""),
-            user.username or "",
-            str(user.id),
-        ]
-        append_to_sheet(sheet_row)
-    except Exception as e:
-        logger.error("Ошибка записи в Google Sheets: %s", e, exc_info=True)
-
-    # ── 3. AI-скрининг ──
-    try:
-        await screen_application(data)
-    except Exception as e:
-        logger.error("Ошибка AI-скрининга: %s", e, exc_info=True)
+        await asyncio.gather(
+            append_to_sheet(data, user),
+            screen_application(bot, session, app_id, data, user),
+            return_exceptions=True,
+        )
+    except Exception as exc:
+        logger.error("_do_save_application: post-save tasks failed: %s", exc)
