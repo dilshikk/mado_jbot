@@ -30,10 +30,13 @@ router.message.filter(IsPrivateChat())
 logger = logging.getLogger(__name__)
 
 # Минимальное число вопросов до того, как принять решение AI о завершении.
-# Защищает от случайного раннего done= true из-за сбоя модели.
 MIN_QUESTIONS = 4
 
 _TYPING_INTERVAL = 4
+
+# Telegram limits
+_MAX_MESSAGE_LEN = 4096
+_MAX_CAPTION_LEN = 1024
 
 _SKIP_KB_RU = InlineKeyboardMarkup(inline_keyboard=[[
     InlineKeyboardButton(text="⏭ Пропустить вопрос",   callback_data="interview:skip"),
@@ -49,6 +52,11 @@ def _skip_kb(lang: str) -> InlineKeyboardMarkup:
 
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def _truncate(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit - 15] + "\n…(обрезано)"
 
 
 async def _typing_loop(chat_id: int, bot, stop: asyncio.Event) -> None:
@@ -87,7 +95,11 @@ async def _send_combined_hr_card(
     lang: str,
     user,
 ) -> None:
-    """Отправляет в HR-чат объединённую карточку: анкета + AI-анализ."""
+    """Отправляет в HR-чат объединённую карточку: анкета + AI-анализ.
+
+    Если есть фото — сначала фото (без текста), потом текст отдельным сообщением.
+    Telegram caption limit = 1024 символа, message limit = 4096.
+    """
     if not ADMIN_CHAT_ID:
         return
 
@@ -131,8 +143,6 @@ async def _send_combined_hr_card(
         )
 
     full_text = resume_block + ai_block
-    if len(full_text) > 4096:
-        full_text = full_text[:4080] + "\n…(обрезано)"
 
     hr_kb = kb.get_hr_action_keyboard(
         phone=form_data.get("phone", ""),
@@ -140,20 +150,31 @@ async def _send_combined_hr_card(
         candidate_id=user_id,
     )
 
+    photo_id = form_data.get("photo_file_id")
+
     try:
-        photo_id = form_data.get("photo_file_id")
         if photo_id:
+            # Фото + короткий caption (только имя и вакансия, ≤1024 символов)
+            cand_name = form_data.get("name", "")
+            position  = form_data.get("position", "")
+            short_caption = f"👤 <b>{cand_name}</b> — {position}" if cand_name else "📋 Анкета кандидата"
             await bot.send_photo(
                 ADMIN_CHAT_ID,
                 photo=photo_id,
-                caption=full_text,
+                caption=_truncate(short_caption, _MAX_CAPTION_LEN),
+                parse_mode="HTML",
+            )
+            # Полный текст отдельным сообщением с кнопками
+            await bot.send_message(
+                ADMIN_CHAT_ID,
+                text=_truncate(full_text, _MAX_MESSAGE_LEN),
                 reply_markup=hr_kb,
                 parse_mode="HTML",
             )
         else:
             await bot.send_message(
                 ADMIN_CHAT_ID,
-                text=full_text,
+                text=_truncate(full_text, _MAX_MESSAGE_LEN),
                 reply_markup=hr_kb,
                 parse_mode="HTML",
             )
@@ -222,18 +243,15 @@ async def process_answer(message: Message, state: FSMContext, session: AsyncSess
     current_topic   = data.get("interview_current_topic", "")
     asked_questions = data.get("interview_asked_questions", [])
 
-    # Сохраняем ответ вместе с темой — модель использует topic для трекинга компетенций
     qa_log.append({"q": current_q, "a": (message.text or "").strip(), "topic": current_topic})
     await db.append_qa(session, session_id, qa_log)
 
     step     = await _get_next_step_with_typing(message.chat.id, message.bot, form_data, qa_log, lang)
     question = (step.get("question") or "").strip()
 
-    # Завершаем только если AI сказал done=true И задано хотя бы MIN_QUESTIONS
     if step.get("done") and len(qa_log) >= MIN_QUESTIONS:
         await _finish_interview(message, state, session, session_id, form_data, lang, qa_log)
         return
-    # Абсолютный лимит
     if len(qa_log) >= HARD_MAX_QUESTIONS:
         await _finish_interview(message, state, session, session_id, form_data, lang, qa_log)
         return
