@@ -1,14 +1,10 @@
 # bot/handlers/admin/broadcast.py
 """Главное меню /admin + FSM рассылки.
 
-Архитектура «стек экранов»:
-  /admin  →  Reply главного меню (get_admin_menu_keyboard)
-  Кнопка  →  сначала убирается старая Reply (remove_keyboard),
-             затем отправляется новое сообщение с Reply раздела.
-  ⬅️ Назад / ❌ Отмена  →  убирается Reply раздела,
-                            восстанавливается Reply главного меню.
-
-Никаких Inline-клавиатур внутри панели администратора.
+Архитектура:
+  /admin → Inline главного меню (get_admin_menu_inline_kb)
+  Кнопка → callback_query → переход в раздел
+  Рассылка → FSM с Reply-клавиатурами для ввода
 """
 
 import asyncio
@@ -20,22 +16,19 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramFor
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
+    CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
-    PhotoSize,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.core.config import ADMIN_IDS
 from bot.db import requests as db
+from bot.keyboards.inline import get_admin_menu_inline_kb
 from bot.keyboards.reply import (
-    ADMIN_BTN_BACK,
     ADMIN_BTN_CANCEL,
-    get_admin_back_keyboard,
     get_admin_cancel_keyboard,
-    get_admin_menu_keyboard,
-    get_admin_skip_cancel_keyboard,
     get_broadcast_photo_kb,
     get_broadcast_preview_kb,
     get_broadcast_url_kb,
@@ -49,15 +42,7 @@ logger = logging.getLogger(__name__)
 _BROADCAST_DELAY   = 0.05
 _PROGRESS_INTERVAL = 25
 
-# Тексты кнопок главного меню
-_BTN_BROADCAST   = "📢 Рассылка"
-_BTN_VACANCIES   = "💼 Вакансии"
-_BTN_METRO       = "🚇 Метро"
-_BTN_DASHBOARD   = "📊 Дашборд"
-_BTN_ADMINLIST   = "👮 Администраторы"
-_BTN_RESEND      = "📋 Resend"
-
-# Тексты кнопок в разделе «Рассылка»
+# Тексты кнопок рассылки
 _BTN_SKIP_PHOTO  = "⏭ Без фото"
 _BTN_SKIP_URL    = "⏭ Без ссылки"
 _BTN_SEND_ALL    = "✅ Отправить всем"
@@ -65,23 +50,18 @@ _BTN_EDIT_PHOTO  = "✏️ Изменить фото"
 _BTN_EDIT_TEXT   = "✏️ Изменить текст"
 _BTN_EDIT_URL    = "✏️ Изменить ссылку"
 
-# Тексты кнопок в разделе «Resend»
-_BTN_RESEND_BACK = ADMIN_BTN_BACK
-
 
 def _is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 
-# ── Хелпер: переход «назад» в главное меню ───────────────────────────────────
-
-async def _go_home(message: Message, state: FSMContext) -> None:
-    """Завершает FSM и восстанавливает главное меню."""
+async def _show_admin_menu(message: Message, state: FSMContext) -> None:
+    """Отправляет главное меню панели администратора."""
     await state.clear()
     await message.answer(
         "🛠 <b>Панель администратора</b>\n\nВыберите раздел:",
         parse_mode="HTML",
-        reply_markup=get_admin_menu_keyboard(),
+        reply_markup=get_admin_menu_inline_kb(),
     )
 
 
@@ -96,93 +76,113 @@ async def cmd_admin(message: Message, state: FSMContext) -> None:
     await message.answer(
         "🛠 <b>Панель администратора</b>\n\nДобро пожаловать в панель управления.",
         parse_mode="HTML",
-        reply_markup=get_admin_menu_keyboard(),
+        reply_markup=get_admin_menu_inline_kb(),
     )
 
 
-# ── Кнопки главного меню ──────────────────────────────────────────────────────
+# ── Callback: кнопки главного меню ───────────────────────────────────────────
 
-@router.message(F.text == _BTN_BROADCAST)
-async def reply_broadcast(message: Message, state: FSMContext) -> None:
-    if not _is_admin(message.from_user.id):
+@router.callback_query(F.data == "admin:broadcast")
+async def cb_broadcast(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer()
         return
     await state.clear()
     await state.set_state(Broadcast.waiting_photo)
-    # Убираем Reply главного меню, затем показываем экран рассылки
-    await message.answer("⏳", reply_markup=remove_keyboard())
-    await message.answer(
+    await callback.message.delete()
+    await callback.message.answer(
         "📢 <b>Создание рассылки</b>\n\n"
         "<b>Шаг 1/4.</b> Отправьте фото.\n"
         "Или нажмите «⏭ Без фото».",
         parse_mode="HTML",
         reply_markup=get_broadcast_photo_kb(),
     )
+    await callback.answer()
 
 
-@router.message(F.text == _BTN_VACANCIES)
-async def reply_vacancies(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    if not _is_admin(message.from_user.id):
+@router.callback_query(F.data == "admin:vacancies")
+async def cb_vacancies(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer()
         return
     await state.clear()
     from bot.handlers.admin.vacancies import show_vacancies_screen  # noqa: PLC0415
-    await show_vacancies_screen(message, session)
+    await show_vacancies_screen(callback.message, session, edit=True)
+    await callback.answer()
 
 
-@router.message(F.text == _BTN_METRO)
-async def reply_metro(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    if not _is_admin(message.from_user.id):
+@router.callback_query(F.data == "admin:metro")
+async def cb_metro(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer()
         return
     await state.clear()
     from bot.handlers.admin.metro_stations import show_metro_home  # noqa: PLC0415
-    await show_metro_home(message, session)
+    await show_metro_home(callback.message, session, edit=True)
+    await callback.answer()
 
 
-@router.message(F.text == _BTN_DASHBOARD)
-async def reply_dashboard(message: Message, session: AsyncSession) -> None:
-    if not _is_admin(message.from_user.id):
+@router.callback_query(F.data == "admin:dashboard")
+async def cb_dashboard(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer()
         return
-    await message.answer("⏳", reply_markup=remove_keyboard())
     from bot.handlers.hr.dashboard import _send_dashboard  # noqa: PLC0415
-    await _send_dashboard(message, session)
-    # Восстанавливаем главное меню после дашборда
-    await message.answer("Выберите раздел:", reply_markup=get_admin_menu_keyboard())
+    await callback.message.delete()
+    await _send_dashboard(callback.message, session)
+    await callback.message.answer(
+        "🛠 <b>Панель администратора</b>\n\nВыберите раздел:",
+        parse_mode="HTML",
+        reply_markup=get_admin_menu_inline_kb(),
+    )
+    await callback.answer()
 
 
-@router.message(F.text == _BTN_ADMINLIST)
-async def reply_adminlist(message: Message) -> None:
-    if not _is_admin(message.from_user.id):
+@router.callback_query(F.data == "admin:adminlist")
+async def cb_adminlist(callback: CallbackQuery) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer()
         return
-    await message.answer("⏳", reply_markup=remove_keyboard())
     lines = [f"👮 <b>Список администраторов</b>\n{'─'*28}"]
     for i, aid in enumerate(ADMIN_IDS, 1):
         lines.append(f"{i}. <code>{aid}</code>")
-    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=get_admin_back_keyboard())
+    await callback.message.edit_text(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin:home")]
+        ]),
+    )
+    await callback.answer()
 
 
-@router.message(F.text == _BTN_RESEND)
-async def reply_resend(message: Message, state: FSMContext) -> None:
-    if not _is_admin(message.from_user.id):
+@router.callback_query(F.data == "admin:resend")
+async def cb_resend(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer()
         return
     await state.set_state(Broadcast.waiting_resend_id)
-    await message.answer("⏳", reply_markup=remove_keyboard())
-    await message.answer(
+    await callback.message.delete()
+    await callback.message.answer(
         "📋 <b>Resend карточки кандидата</b>\n\nВведите <b>Telegram ID</b>:",
         parse_mode="HTML",
         reply_markup=get_admin_cancel_keyboard(),
     )
+    await callback.answer()
 
 
-# ── Кнопка «Назад» из простых разделов (Администраторы, Дашборд) ──────────────
-
-@router.message(F.text == ADMIN_BTN_BACK)
-async def reply_back(message: Message, state: FSMContext) -> None:
-    if not _is_admin(message.from_user.id):
+@router.callback_query(F.data == "admin:home")
+async def cb_admin_home(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer()
         return
-    # Работает как общий обработчик «Назад» для разделов без собственного FSM.
-    # Разделы с FSM (Вакансии, Метро, Рассылка) перехватывают эту кнопку
-    # своими фильтрами по State, поэтому здесь она попадает только тогда,
-    # когда FSM не активен (простые разделы).
-    await _go_home(message, state)
+    await state.clear()
+    await callback.message.edit_text(
+        "🛠 <b>Панель администратора</b>\n\nВыберите раздел:",
+        parse_mode="HTML",
+        reply_markup=get_admin_menu_inline_kb(),
+    )
+    await callback.answer()
 
 
 # ── Кнопка «Отмена» — глобальный выход из любого FSM ─────────────────────────
@@ -191,7 +191,13 @@ async def reply_back(message: Message, state: FSMContext) -> None:
 async def reply_cancel(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
         return
-    await _go_home(message, state)
+    await state.clear()
+    await message.answer("⏳", reply_markup=remove_keyboard())
+    await message.answer(
+        "🛠 <b>Панель администратора</b>\n\nВыберите раздел:",
+        parse_mode="HTML",
+        reply_markup=get_admin_menu_inline_kb(),
+    )
 
 
 # ── Resend FSM ────────────────────────────────────────────────────────────────
@@ -200,7 +206,13 @@ async def reply_cancel(message: Message, state: FSMContext) -> None:
 async def resend_cancel(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
         return
-    await _go_home(message, state)
+    await state.clear()
+    await message.answer("⏳", reply_markup=remove_keyboard())
+    await message.answer(
+        "🛠 <b>Панель администратора</b>\n\nВыберите раздел:",
+        parse_mode="HTML",
+        reply_markup=get_admin_menu_inline_kb(),
+    )
 
 
 @router.message(Broadcast.waiting_resend_id)
@@ -215,7 +227,12 @@ async def resend_execute(message: Message, state: FSMContext, session: AsyncSess
     from bot.handlers.hr.dashboard import resend_candidate_card  # noqa: PLC0415
     message.text = f"/resend {text}"
     await resend_candidate_card(message, session)
-    await message.answer("Выберите раздел:", reply_markup=get_admin_menu_keyboard())
+    await message.answer("⏳", reply_markup=remove_keyboard())
+    await message.answer(
+        "🛠 <b>Панель администратора</b>\n\nВыберите раздел:",
+        parse_mode="HTML",
+        reply_markup=get_admin_menu_inline_kb(),
+    )
 
 
 # ── /adminlist (прямая команда) ────────────────────────────────────────────────
@@ -232,18 +249,14 @@ async def cmd_adminlist(message: Message) -> None:
 
 # ── Broadcast FSM ─────────────────────────────────────────────────────────────
 
-# Шаг 1: фото
 @router.message(Broadcast.waiting_photo, F.photo)
 async def broadcast_got_photo(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
         return
     await state.update_data(photo_file_id=message.photo[-1].file_id)
     await state.set_state(Broadcast.waiting_caption)
-    await message.answer(
-        "<b>Шаг 2/4.</b> Введите текст сообщения (HTML).",
-        parse_mode="HTML",
-        reply_markup=get_admin_cancel_keyboard(),
-    )
+    await message.answer("<b>Шаг 2/4.</b> Введите текст сообщения (HTML).", parse_mode="HTML",
+                         reply_markup=get_admin_cancel_keyboard())
 
 
 @router.message(Broadcast.waiting_photo, F.text == _BTN_SKIP_PHOTO)
@@ -252,38 +265,36 @@ async def broadcast_skip_photo(message: Message, state: FSMContext) -> None:
         return
     await state.update_data(photo_file_id=None)
     await state.set_state(Broadcast.waiting_caption)
-    await message.answer(
-        "<b>Шаг 2/4.</b> Введите текст сообщения (HTML).",
-        parse_mode="HTML",
-        reply_markup=get_admin_cancel_keyboard(),
-    )
+    await message.answer("<b>Шаг 2/4.</b> Введите текст сообщения (HTML).", parse_mode="HTML",
+                         reply_markup=get_admin_cancel_keyboard())
 
 
 @router.message(Broadcast.waiting_photo, F.text == ADMIN_BTN_CANCEL)
 async def broadcast_cancel_at_photo(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
         return
-    await _go_home(message, state)
+    await state.clear()
+    await message.answer("⏳", reply_markup=remove_keyboard())
+    await message.answer("🛠 <b>Панель администратора</b>\n\nВыберите раздел:",
+                         parse_mode="HTML", reply_markup=get_admin_menu_inline_kb())
 
 
-# Шаг 2: текст
 @router.message(Broadcast.waiting_caption, F.text)
 async def broadcast_got_caption(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
         return
     if message.text == ADMIN_BTN_CANCEL:
-        await _go_home(message, state)
+        await state.clear()
+        await message.answer("⏳", reply_markup=remove_keyboard())
+        await message.answer("🛠 <b>Панель администратора</b>\n\nВыберите раздел:",
+                             parse_mode="HTML", reply_markup=get_admin_menu_inline_kb())
         return
     await state.update_data(caption=message.text)
     await state.set_state(Broadcast.waiting_url)
-    await message.answer(
-        "<b>Шаг 3/4.</b> Отправьте URL-ссылку или пропустите.",
-        parse_mode="HTML",
-        reply_markup=get_broadcast_url_kb(),
-    )
+    await message.answer("<b>Шаг 3/4.</b> Отправьте URL-ссылку или пропустите.", parse_mode="HTML",
+                         reply_markup=get_broadcast_url_kb())
 
 
-# Шаг 3: ссылка
 @router.message(Broadcast.waiting_url, F.text == _BTN_SKIP_URL)
 async def broadcast_skip_url(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if not _is_admin(message.from_user.id):
@@ -296,7 +307,10 @@ async def broadcast_skip_url(message: Message, state: FSMContext, session: Async
 async def broadcast_cancel_at_url(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
         return
-    await _go_home(message, state)
+    await state.clear()
+    await message.answer("⏳", reply_markup=remove_keyboard())
+    await message.answer("🛠 <b>Панель администратора</b>\n\nВыберите раздел:",
+                         parse_mode="HTML", reply_markup=get_admin_menu_inline_kb())
 
 
 @router.message(Broadcast.waiting_url, F.text)
@@ -311,24 +325,24 @@ async def broadcast_got_url(message: Message, state: FSMContext) -> None:
     await state.set_state(Broadcast.waiting_url_title)
     await message.answer(
         "<b>Шаг 4/4.</b> Введите название кнопки-ссылки.\nНапример: <code>Открыть меню</code>",
-        parse_mode="HTML",
-        reply_markup=get_admin_cancel_keyboard(),
+        parse_mode="HTML", reply_markup=get_admin_cancel_keyboard(),
     )
 
 
-# Шаг 4: название кнопки
 @router.message(Broadcast.waiting_url_title, F.text)
 async def broadcast_got_url_title(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if not _is_admin(message.from_user.id):
         return
     if message.text == ADMIN_BTN_CANCEL:
-        await _go_home(message, state)
+        await state.clear()
+        await message.answer("⏳", reply_markup=remove_keyboard())
+        await message.answer("🛠 <b>Панель администратора</b>\n\nВыберите раздел:",
+                             parse_mode="HTML", reply_markup=get_admin_menu_inline_kb())
         return
     await state.update_data(url_title=message.text.strip())
     await _show_preview(message, state, session)
 
 
-# Предпросмотр
 async def _show_preview(message: Message, state: FSMContext, session: AsyncSession) -> None:
     data      = await state.get_data()
     photo_id  = data.get("photo_file_id")
@@ -349,15 +363,17 @@ async def _show_preview(message: Message, state: FSMContext, session: AsyncSessi
     )
 
 
-# Кнопки предпросмотра
 @router.message(Broadcast.preview, F.text == ADMIN_BTN_CANCEL)
 async def broadcast_cancel_preview(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
         return
-    await _go_home(message, state)
+    await state.clear()
+    await message.answer("⏳", reply_markup=remove_keyboard())
+    await message.answer("🛠 <b>Панель администратора</b>\n\nВыберите раздел:",
+                         parse_mode="HTML", reply_markup=get_admin_menu_inline_kb())
 
 
-@router.message(Broadcast.preview, F.text == _BTN_EDIT_PHOTO)
+@router.message(Broadcast.preview, F.text == "✏️ Изменить фото")
 async def broadcast_edit_photo(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
         return
@@ -365,7 +381,7 @@ async def broadcast_edit_photo(message: Message, state: FSMContext) -> None:
     await message.answer("Отправьте новое фото:", reply_markup=get_broadcast_photo_kb())
 
 
-@router.message(Broadcast.preview, F.text == _BTN_EDIT_TEXT)
+@router.message(Broadcast.preview, F.text == "✏️ Изменить текст")
 async def broadcast_edit_text(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
         return
@@ -373,7 +389,7 @@ async def broadcast_edit_text(message: Message, state: FSMContext) -> None:
     await message.answer("Введите новый текст:", reply_markup=get_admin_cancel_keyboard())
 
 
-@router.message(Broadcast.preview, F.text == _BTN_EDIT_URL)
+@router.message(Broadcast.preview, F.text == "✏️ Изменить ссылку")
 async def broadcast_edit_url(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
         return
@@ -381,7 +397,7 @@ async def broadcast_edit_url(message: Message, state: FSMContext) -> None:
     await message.answer("Введите новую ссылку:", reply_markup=get_broadcast_url_kb())
 
 
-@router.message(Broadcast.preview, F.text == _BTN_SEND_ALL)
+@router.message(Broadcast.preview, F.text == "✅ Отправить всем")
 async def broadcast_send(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if not _is_admin(message.from_user.id):
         return
@@ -408,15 +424,11 @@ async def broadcast_send(message: Message, state: FSMContext, session: AsyncSess
     for i, user_id in enumerate(user_ids, 1):
         try:
             if photo_id:
-                await message.bot.send_photo(
-                    chat_id=user_id, photo=photo_id,
-                    caption=caption, parse_mode="HTML", reply_markup=url_kb,
-                )
+                await message.bot.send_photo(chat_id=user_id, photo=photo_id,
+                                             caption=caption, parse_mode="HTML", reply_markup=url_kb)
             else:
-                await message.bot.send_message(
-                    chat_id=user_id, text=caption,
-                    parse_mode="HTML", reply_markup=url_kb,
-                )
+                await message.bot.send_message(chat_id=user_id, text=caption,
+                                               parse_mode="HTML", reply_markup=url_kb)
             sent_count += 1
         except TelegramForbiddenError:
             blocked += 1
@@ -446,6 +458,6 @@ async def broadcast_send(message: Message, state: FSMContext, session: AsyncSess
         f"❌ Ошибок: <b>{failed}</b>\n\n"
         f"{'✅ Без ошибок!' if no_errors else '⚠️ Часть сообщений не доставлена.'}",
         parse_mode="HTML",
-        reply_markup=get_admin_menu_keyboard(),
+        reply_markup=get_admin_menu_inline_kb(),
     )
     logger.info("Broadcast done: sent=%d failed=%d blocked=%d total=%d", sent_count, failed, blocked, total)
