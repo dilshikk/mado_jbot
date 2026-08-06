@@ -43,10 +43,57 @@ def _skip_text(lang: str) -> str:
     return _t(lang, "btn_skip", "⏭ Пропустить")
 
 
+# ─── Recap ────────────────────────────────────────────────────────────────────
+
+_RECAP_LABELS: dict[str, dict[str, str]] = {
+    "ru": {
+        "languages":    "🌐 Языки",
+        "position":     "💼 Вакансия",
+        "readiness":    "📅 Готовность",
+        "experience":   "🧳 Опыт работы",
+        "exp_company":  "🏢 Компания",
+        "exp_position": "👔 Должность",
+        "exp_duration": "⏱ Стаж",
+        "exp_duties":   "📋 Обязанности",
+        "salary":       "💰 Зарплата",
+        "schedule":     "📆 График",
+        "evening":      "🌙 Вечерние смены",
+        "weekends":     "🗓 Выходные",
+        "smoking":      "🚬 Курение",
+        "med_book":     "📋 Медкнижка",
+        "photo":        "📷 Фото",
+    },
+    "uz": {
+        "languages":    "🌐 Tillar",
+        "position":     "💼 Vakansiya",
+        "readiness":    "📅 Tayyor",
+        "experience":   "🧳 Tajriba",
+        "exp_company":  "🏢 Kompaniya",
+        "exp_position": "👔 Lavozim",
+        "exp_duration": "⏱ Ish staji",
+        "exp_duties":   "📋 Vazifalar",
+        "salary":       "💰 Maosh",
+        "schedule":     "📆 Jadval",
+        "evening":      "🌙 Kechki smenalar",
+        "weekends":     "🗓 Dam olish kunlari",
+        "smoking":      "🚬 Chekish",
+        "med_book":     "📋 Tibbiy daftar",
+        "photo":        "📷 Foto",
+    },
+}
+
+def _recap(lang: str, field: str, value: str | None) -> str | None:
+    """Возвращает строку подтверждения или None если значение пусто."""
+    if not value:
+        return None
+    labels = _RECAP_LABELS.get(lang, _RECAP_LABELS["ru"])
+    label  = labels.get(field, field)
+    return f"{label}: <b>{value}</b>"
+
+
 # ─── Публичная функция — вызов из metro.py ────────────────────────────────────
 
 async def ask_languages(message: Message, state: FSMContext, lang: str) -> None:
-    """Отправляет inline-клавиатуру выбора языков. Вызывается из metro.py."""
     await state.set_state(Form.waiting_languages)
     selected: set[str] = set()
     await message.answer(
@@ -78,6 +125,10 @@ async def handle_languages(callback: CallbackQuery, state: FSMContext, session: 
             return
         with suppress(TelegramAPIError):
             await callback.message.edit_reply_markup(reply_markup=None)
+        # Recap
+        lang_names = [_t(lang, f"lang_opt_{c}", c) for c in selected_list]
+        if recap := _recap(lang, "languages", ", ".join(lang_names)):
+            await callback.message.answer(recap, parse_mode="HTML")
         await _ask_position_after_languages(callback.message, state, session, lang)
         return
 
@@ -125,6 +176,9 @@ async def handle_position(callback: CallbackQuery, state: FSMContext, session: A
     await state.update_data(position=position_label)
     with suppress(TelegramAPIError):
         await callback.message.edit_reply_markup(reply_markup=None)
+    # Recap
+    if recap := _recap(lang, "position", position_label):
+        await callback.message.answer(recap, parse_mode="HTML")
     await callback.message.answer(
         LOCALIZATION[lang]["ask_readiness"],
         reply_markup=kb.get_readiness_inline_keyboard(lang),
@@ -133,18 +187,21 @@ async def handle_position(callback: CallbackQuery, state: FSMContext, session: A
     await state.set_state(Form.waiting_readiness)
 
 
-# ─── 3. Готовность к работе (Inline CallbackQuery) ───────────────────────────
+# ─── 3. Готовность к работе (Inline) ─────────────────────────────────────────
 
 @router.callback_query(Form.waiting_readiness, F.data.startswith("readiness:"))
 async def handle_readiness(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     data = await state.get_data()
     lang = _lang(data)
-    key = callback.data.split(":")[1]  # today, tomorrow, week, two_weeks, month, skip
+    key   = callback.data.split(":")[1]
     value = None if key == "skip" else _t(lang, f"readiness_{key}", key)
     await state.update_data(readiness=value)
     with suppress(TelegramAPIError):
         await callback.message.edit_reply_markup(reply_markup=None)
+    # Recap
+    if recap := _recap(lang, "readiness", value):
+        await callback.message.answer(recap, parse_mode="HTML")
     await state.set_state(Form.waiting_experience)
     await callback.message.answer(
         _t(lang, "ask_experience_yn"),
@@ -158,21 +215,27 @@ async def handle_readiness(callback: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(Form.waiting_experience, F.data.startswith("experience:"))
 async def handle_experience_yn(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
-    data = await state.get_data()
-    lang = _lang(data)
+    data   = await state.get_data()
+    lang   = _lang(data)
     choice = callback.data.split(":")[1]
     with suppress(TelegramAPIError):
         await callback.message.edit_reply_markup(reply_markup=None)
 
     if choice == "no":
+        exp_value = _t(lang, "exp_no", "Нет")
         await state.update_data(
-            experience=_t(lang, "exp_no", "Нет"),
+            experience=exp_value,
             exp_company=None, exp_position=None,
             exp_duration=None, exp_duties=None,
         )
+        if recap := _recap(lang, "experience", exp_value):
+            await callback.message.answer(recap, parse_mode="HTML")
         await _ask_salary(callback.message, state, lang)
     else:
-        await state.update_data(experience=_t(lang, "exp_yes", "Да"))
+        exp_value = _t(lang, "exp_yes", "Да")
+        await state.update_data(experience=exp_value)
+        if recap := _recap(lang, "experience", exp_value):
+            await callback.message.answer(recap, parse_mode="HTML")
         await state.set_state(Form.waiting_exp_company)
         await callback.message.answer(
             _t(lang, "ask_exp_company"),
@@ -184,36 +247,48 @@ async def handle_experience_yn(callback: CallbackQuery, state: FSMContext) -> No
 
 @router.message(Form.waiting_exp_company)
 async def handle_exp_company(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    lang = _lang(data)
-    await state.update_data(exp_company=(message.text or "").strip() or None)
+    data  = await state.get_data()
+    lang  = _lang(data)
+    value = (message.text or "").strip() or None
+    await state.update_data(exp_company=value)
+    if recap := _recap(lang, "exp_company", value):
+        await message.answer(recap, parse_mode="HTML")
     await state.set_state(Form.waiting_exp_position)
     await message.answer(_t(lang, "ask_exp_position"), reply_markup=kb.get_cancel_keyboard(lang))
 
 @router.message(Form.waiting_exp_position)
 async def handle_exp_position(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    lang = _lang(data)
-    text = (message.text or "").strip()
-    await state.update_data(exp_position=None if text == _skip_text(lang) else text or None)
+    data  = await state.get_data()
+    lang  = _lang(data)
+    text  = (message.text or "").strip()
+    value = None if text == _skip_text(lang) else text or None
+    await state.update_data(exp_position=value)
+    if recap := _recap(lang, "exp_position", value):
+        await message.answer(recap, parse_mode="HTML")
     await state.set_state(Form.waiting_exp_duration)
     await message.answer(_t(lang, "ask_exp_duration"), reply_markup=kb.get_cancel_keyboard(lang))
 
 @router.message(Form.waiting_exp_duration)
 async def handle_exp_duration(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    lang = _lang(data)
-    text = (message.text or "").strip()
-    await state.update_data(exp_duration=None if text == _skip_text(lang) else text or None)
+    data  = await state.get_data()
+    lang  = _lang(data)
+    text  = (message.text or "").strip()
+    value = None if text == _skip_text(lang) else text or None
+    await state.update_data(exp_duration=value)
+    if recap := _recap(lang, "exp_duration", value):
+        await message.answer(recap, parse_mode="HTML")
     await state.set_state(Form.waiting_exp_duties)
     await message.answer(_t(lang, "ask_exp_duties"), reply_markup=kb.get_cancel_keyboard(lang))
 
 @router.message(Form.waiting_exp_duties)
 async def handle_exp_duties(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    lang = _lang(data)
-    text = (message.text or "").strip()
-    await state.update_data(exp_duties=None if text == _skip_text(lang) else text or None)
+    data  = await state.get_data()
+    lang  = _lang(data)
+    text  = (message.text or "").strip()
+    value = None if text == _skip_text(lang) else text or None
+    await state.update_data(exp_duties=value)
+    if recap := _recap(lang, "exp_duties", value):
+        await message.answer(recap, parse_mode="HTML")
     await _ask_salary(message, state, lang)
 
 
@@ -229,10 +304,13 @@ async def _ask_salary(message: Message, state: FSMContext, lang: str) -> None:
 
 @router.message(Form.waiting_salary)
 async def handle_salary(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    lang = _lang(data)
-    text = (message.text or "").strip()
-    await state.update_data(salary=None if text == _skip_text(lang) else text or None)
+    data  = await state.get_data()
+    lang  = _lang(data)
+    text  = (message.text or "").strip()
+    value = None if text == _skip_text(lang) else text or None
+    await state.update_data(salary=value)
+    if recap := _recap(lang, "salary", value):
+        await message.answer(recap, parse_mode="HTML")
     await state.set_state(Form.waiting_schedule)
     await message.answer(
         _t(lang, "ask_schedule"),
@@ -245,13 +323,15 @@ async def handle_salary(message: Message, state: FSMContext) -> None:
 @router.callback_query(Form.waiting_schedule, F.data.startswith("schedule:"))
 async def handle_schedule(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
-    data = await state.get_data()
-    lang = _lang(data)
-    key = callback.data.split(":")[1]
+    data  = await state.get_data()
+    lang  = _lang(data)
+    key   = callback.data.split(":")[1]
     value = None if key == "skip" else _t(lang, f"schedule_{key}", key)
     await state.update_data(schedule=value)
     with suppress(TelegramAPIError):
         await callback.message.edit_reply_markup(reply_markup=None)
+    if recap := _recap(lang, "schedule", value):
+        await callback.message.answer(recap, parse_mode="HTML")
     await state.set_state(Form.waiting_evening_shifts)
     await callback.message.answer(
         _t(lang, "ask_evening_shifts"),
@@ -264,13 +344,15 @@ async def handle_schedule(callback: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(Form.waiting_evening_shifts, F.data.startswith("evening:"))
 async def handle_evening_shifts(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
-    data = await state.get_data()
-    lang = _lang(data)
-    key = callback.data.split(":")[1]
+    data  = await state.get_data()
+    lang  = _lang(data)
+    key   = callback.data.split(":")[1]
     value = None if key == "skip" else _t(lang, f"evening_{key}", key)
     await state.update_data(evening_shifts=value)
     with suppress(TelegramAPIError):
         await callback.message.edit_reply_markup(reply_markup=None)
+    if recap := _recap(lang, "evening", value):
+        await callback.message.answer(recap, parse_mode="HTML")
     await state.set_state(Form.waiting_weekends)
     await callback.message.answer(
         _t(lang, "ask_weekends"),
@@ -283,13 +365,15 @@ async def handle_evening_shifts(callback: CallbackQuery, state: FSMContext) -> N
 @router.callback_query(Form.waiting_weekends, F.data.startswith("weekends:"))
 async def handle_weekends(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
-    data = await state.get_data()
-    lang = _lang(data)
-    key = callback.data.split(":")[1]
+    data  = await state.get_data()
+    lang  = _lang(data)
+    key   = callback.data.split(":")[1]
     value = None if key == "skip" else _t(lang, f"weekends_{key}", key)
     await state.update_data(weekends=value)
     with suppress(TelegramAPIError):
         await callback.message.edit_reply_markup(reply_markup=None)
+    if recap := _recap(lang, "weekends", value):
+        await callback.message.answer(recap, parse_mode="HTML")
     await state.set_state(Form.waiting_smoking)
     await callback.message.answer(
         _t(lang, "ask_smoking"),
@@ -302,13 +386,15 @@ async def handle_weekends(callback: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(Form.waiting_smoking, F.data.startswith("smoking:"))
 async def handle_smoking(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
-    data = await state.get_data()
-    lang = _lang(data)
-    key = callback.data.split(":")[1]
+    data  = await state.get_data()
+    lang  = _lang(data)
+    key   = callback.data.split(":")[1]
     value = None if key == "skip" else _t(lang, f"smoking_{key}", key)
     await state.update_data(smoking=value)
     with suppress(TelegramAPIError):
         await callback.message.edit_reply_markup(reply_markup=None)
+    if recap := _recap(lang, "smoking", value):
+        await callback.message.answer(recap, parse_mode="HTML")
     await state.set_state(Form.waiting_med_book)
     await callback.message.answer(
         _t(lang, "ask_med_book"),
@@ -321,13 +407,15 @@ async def handle_smoking(callback: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(Form.waiting_med_book, F.data.startswith("med_book:"))
 async def handle_med_book(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
-    data = await state.get_data()
-    lang = _lang(data)
-    key = callback.data.split(":")[1]
+    data  = await state.get_data()
+    lang  = _lang(data)
+    key   = callback.data.split(":")[1]
     value = None if key == "skip" else _t(lang, f"med_book_{key}", key)
     await state.update_data(med_book=value)
     with suppress(TelegramAPIError):
         await callback.message.edit_reply_markup(reply_markup=None)
+    if recap := _recap(lang, "med_book", value):
+        await callback.message.answer(recap, parse_mode="HTML")
     await state.set_state(Form.waiting_photo)
     await callback.message.answer(
         _t(lang, "ask_photo"),
@@ -336,7 +424,7 @@ async def handle_med_book(callback: CallbackQuery, state: FSMContext) -> None:
     )
 
 
-# ─── 12. Фото кандидата (обычное сообщение) ──────────────────────────────────
+# ─── 12. Фото кандидата ───────────────────────────────────────────────────────
 
 @router.message(Form.waiting_photo)
 async def handle_photo(message: Message, state: FSMContext) -> None:
@@ -349,6 +437,8 @@ async def handle_photo(message: Message, state: FSMContext) -> None:
     elif message.photo:
         photo_id = message.photo[-1].file_id
         await state.update_data(photo_file_id=photo_id)
+        photo_label = "📷 Фото получено ✅" if lang == "ru" else "📷 Foto qabul qilindi ✅"
+        await message.answer(photo_label, parse_mode="HTML")
         logger.info("handle_photo: user_id=%d photo saved", message.from_user.id)
     else:
         await message.answer(
