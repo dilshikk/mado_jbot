@@ -44,19 +44,29 @@ async def session() -> AsyncSession:
 
 
 class FakeMessage:
-    """Minimal stand-in for aiogram's Message."""
+    """Minimal stand-in for aiogram's Message.
 
-    def __init__(self, chat_id: int = 1) -> None:
+    `answer()` returns `self` (rather than a fresh instance) so that a
+    message sent in reply to a callback — e.g. the broadcast progress
+    message, which is later mutated via `edit_text()` — stays reachable
+    from the same reference the handler returned, exactly like the real
+    aiogram `Message.answer()` return value would be used by callers that
+    keep it around to edit later.
+    """
+
+    def __init__(self, chat_id: int = 1, user_id: int | None = None) -> None:
         self.chat = type("Chat", (), {"id": chat_id})()
+        self.from_user = type("User", (), {"id": user_id if user_id is not None else chat_id})()
+        self.text: str | None = None
         self.answered_texts: list[str] = []
 
     async def answer(self, text: str, **kwargs) -> "FakeMessage":
         self.answered_texts.append(text)
-        return FakeMessage(chat_id=self.chat.id)
+        return self
 
     async def answer_photo(self, photo, **kwargs) -> "FakeMessage":
         self.answered_texts.append(kwargs.get("caption", ""))
-        return FakeMessage(chat_id=self.chat.id)
+        return self
 
     async def edit_text(self, text: str, **kwargs) -> None:
         self.answered_texts.append(text)
@@ -185,7 +195,7 @@ def test_url_keyboard_falls_back_to_default_title_when_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_broadcast_got_url_rejects_non_http_url() -> None:
-    message = FakeMessage()
+    message = FakeMessage(user_id=1)
     message.text = "not-a-url"
     state = FakeFSMContext()
 
@@ -197,7 +207,7 @@ async def test_broadcast_got_url_rejects_non_http_url() -> None:
 
 @pytest.mark.asyncio
 async def test_broadcast_got_url_accepts_http_url_and_advances_state() -> None:
-    message = FakeMessage()
+    message = FakeMessage(user_id=1)
     message.text = "https://example.com/menu"
     state = FakeFSMContext()
 
@@ -216,7 +226,7 @@ async def test_broadcast_send_delivers_to_all_registered_users(session: AsyncSes
     await db.register_user(session, user_id=2, username="b", first_name="B", lang="ru")
 
     bot = FakeBot()
-    message = FakeMessage()
+    message = FakeMessage(user_id=1)
     callback = FakeCallbackQuery(user_id=1, data="broadcast:send", message=message)
     callback.bot = bot
     state = FakeFSMContext(initial={"caption": "🔥 Новое меню!", "photo_file_id": None})
@@ -234,7 +244,7 @@ async def test_broadcast_send_counts_blocked_and_failed_separately(session: Asyn
     await db.register_user(session, user_id=3, username="c", first_name="C", lang="ru")
 
     bot = FakeBot(forbidden_for={2}, bad_request_for={3})
-    message = FakeMessage()
+    message = FakeMessage(user_id=1)
     callback = FakeCallbackQuery(user_id=1, data="broadcast:send", message=message)
     callback.bot = bot
     state = FakeFSMContext(initial={"caption": "Привет", "photo_file_id": None})
@@ -242,6 +252,11 @@ async def test_broadcast_send_counts_blocked_and_failed_separately(session: Asyn
     await broadcast.broadcast_send(callback, state, session)
 
     assert bot.sent_to == [1]
+    # broadcast_send() replies once with a progress message, then repeatedly
+    # calls `.edit_text()` on that *same* returned message object to update
+    # and finally report the final counts — our FakeMessage.answer() returns
+    # `self`, so both the initial progress text and every edit land in the
+    # same `answered_texts` list; the final report is always the last entry.
     final_report = message.answered_texts[-1]
     assert "Отправлено: <b>1</b>" in final_report
     assert "Заблокировали: <b>1</b>" in final_report
@@ -252,7 +267,7 @@ async def test_broadcast_send_counts_blocked_and_failed_separately(session: Asyn
 async def test_broadcast_send_rejects_non_admin(session: AsyncSession) -> None:
     await db.register_user(session, user_id=1, username="a", first_name="A", lang="ru")
     bot = FakeBot()
-    message = FakeMessage()
+    message = FakeMessage(user_id=999)
     callback = FakeCallbackQuery(user_id=999, data="broadcast:send", message=message)
     callback.bot = bot
     state = FakeFSMContext(initial={"caption": "Привет"})
