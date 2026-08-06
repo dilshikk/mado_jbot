@@ -3,7 +3,7 @@
 import logging
 
 from aiogram import F, Router
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramAPIError
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -35,6 +35,7 @@ def _vacancies_keyboard(vacancies: list[dict]) -> InlineKeyboardMarkup:
         ])
     rows.append([InlineKeyboardButton(text="➕ Добавить вакансию", callback_data="vac:add")])
     rows.append([InlineKeyboardButton(text="🔄 Обновить",          callback_data="vac:refresh")])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад",             callback_data="admin:menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -52,7 +53,6 @@ def _cancel_keyboard() -> InlineKeyboardMarkup:
 
 
 def _edit_field_keyboard(vacancy_id: int) -> InlineKeyboardMarkup:
-    """Выбор поля для редактирования."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🇷🇺 Название (рус)",  callback_data=f"vac:edit_field:{vacancy_id}:name_ru")],
         [InlineKeyboardButton(text="🇺🇿 Название (узб)",  callback_data=f"vac:edit_field:{vacancy_id}:name_uz")],
@@ -196,13 +196,22 @@ async def vac_add_start(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         return
     await state.set_state(AddVacancy.waiting_name_ru)
-    sent = await callback.message.answer(
-        "➕ <b>Новая вакансия</b>\n\n<b>Шаг 1/3.</b> Введите название на <b>русском</b>:\n"
-        "Например: <code>Хостес</code>",
-        parse_mode="HTML",
-        reply_markup=_cancel_keyboard(),
-    )
-    await state.update_data(wizard_message_id=sent.message_id)
+    try:
+        await callback.message.edit_text(
+            "➕ <b>Новая вакансия</b>\n\n<b>Шаг 1/3.</b> Введите название на <b>русском</b>:\n"
+            "Например: <code>Хостес</code>",
+            parse_mode="HTML",
+            reply_markup=_cancel_keyboard(),
+        )
+        await state.update_data(wizard_message_id=callback.message.message_id)
+    except TelegramAPIError:
+        sent = await callback.message.answer(
+            "➕ <b>Новая вакансия</b>\n\n<b>Шаг 1/3.</b> Введите название на <b>русском</b>:\n"
+            "Например: <code>Хостес</code>",
+            parse_mode="HTML",
+            reply_markup=_cancel_keyboard(),
+        )
+        await state.update_data(wizard_message_id=sent.message_id)
     await callback.answer()
 
 
@@ -213,16 +222,19 @@ async def vac_add_cancel(callback: CallbackQuery, state: FSMContext, session: As
         return
     await state.clear()
     await callback.answer("Добавление отменено")
-    try:
-        await callback.message.delete()
-    except TelegramBadRequest:
-        pass
     vacancies = await db.get_all_vacancies(session)
-    await callback.message.answer(
-        _vacancy_list_text(vacancies),
-        parse_mode="HTML",
-        reply_markup=_vacancies_keyboard(vacancies),
-    )
+    try:
+        await callback.message.edit_text(
+            _vacancy_list_text(vacancies),
+            parse_mode="HTML",
+            reply_markup=_vacancies_keyboard(vacancies),
+        )
+    except TelegramBadRequest:
+        await callback.message.answer(
+            _vacancy_list_text(vacancies),
+            parse_mode="HTML",
+            reply_markup=_vacancies_keyboard(vacancies),
+        )
 
 
 @router.message(AddVacancy.waiting_name_ru)
@@ -307,16 +319,28 @@ async def _save_new_vacancy(message: Message, state: FSMContext, session: AsyncS
         await message.delete()
     except TelegramBadRequest:
         pass
+    label = f"{emoji} {name_ru}".strip()
+    # Редактируем визард в результат с кнопкой «Назад»
     if wizard_id:
         try:
-            await message.bot.delete_message(chat_id=message.chat.id, message_id=wizard_id)
+            await message.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=wizard_id,
+                text=f"✅ <b>Вакансия добавлена!</b>\n\n💼 {label}\n🇺🇿 {name_uz}",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text="⬅️ К вакансиям", callback_data="vac:refresh"),
+                ]]),
+            )
+            return
         except TelegramBadRequest:
             pass
-    label = f"{emoji} {name_ru}".strip()
+    # Fallback
+    vacancies = await db.get_all_vacancies(session)
     await message.answer(
-        f"✅ <b>Вакансия добавлена!</b>\n\n💼 {label}\n🇺🇿 {name_uz}\n\n"
-        f"Используйте /vacancies для управления.",
+        _vacancy_list_text(vacancies),
         parse_mode="HTML",
+        reply_markup=_vacancies_keyboard(vacancies),
     )
 
 
@@ -340,13 +364,22 @@ async def vac_edit_start(callback: CallbackQuery, state: FSMContext, session: As
     await state.set_state(EditVacancy.choosing_field)
     await state.update_data(edit_vacancy_id=vacancy_id)
 
-    await callback.message.answer(
-        f"✏️ <b>Редактировать вакансию</b>\n{'─'*28}\n\n"
-        f"💼 {name}\n🇺🇿 {name_uz}\n😊 {emoji}\n\n"
-        f"Что хотите изменить?",
-        parse_mode="HTML",
-        reply_markup=_edit_field_keyboard(vacancy_id),
-    )
+    try:
+        await callback.message.edit_text(
+            f"✏️ <b>Редактировать вакансию</b>\n{'─'*28}\n\n"
+            f"💼 {name}\n🇺🇿 {name_uz}\n😊 {emoji}\n\n"
+            f"Что хотите изменить?",
+            parse_mode="HTML",
+            reply_markup=_edit_field_keyboard(vacancy_id),
+        )
+    except TelegramAPIError:
+        await callback.message.answer(
+            f"✏️ <b>Редактировать вакансию</b>\n{'─'*28}\n\n"
+            f"💼 {name}\n🇺🇿 {name_uz}\n😊 {emoji}\n\n"
+            f"Что хотите изменить?",
+            parse_mode="HTML",
+            reply_markup=_edit_field_keyboard(vacancy_id),
+        )
     await callback.answer()
 
 
@@ -355,10 +388,9 @@ async def vac_edit_field(callback: CallbackQuery, state: FSMContext) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer()
         return
-    # формат: vac:edit_field:{id}:{field}
     parts      = callback.data.split(":")
     vacancy_id = int(parts[2])
-    field      = parts[3]   # name_ru | name_uz | emoji
+    field      = parts[3]
 
     field_labels = {
         "name_ru": "название на русском",
@@ -371,11 +403,18 @@ async def vac_edit_field(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(EditVacancy.waiting_value)
     await state.update_data(edit_vacancy_id=vacancy_id, edit_field=field)
 
-    await callback.message.answer(
-        f"✏️ Введите новое <b>{label}</b>:{hint}",
-        parse_mode="HTML",
-        reply_markup=_edit_cancel_keyboard(),
-    )
+    try:
+        await callback.message.edit_text(
+            f"✏️ Введите новое <b>{label}</b>:{hint}",
+            parse_mode="HTML",
+            reply_markup=_edit_cancel_keyboard(),
+        )
+    except TelegramAPIError:
+        await callback.message.answer(
+            f"✏️ Введите новое <b>{label}</b>:{hint}",
+            parse_mode="HTML",
+            reply_markup=_edit_cancel_keyboard(),
+        )
     await callback.answer()
 
 
@@ -396,7 +435,6 @@ async def vac_edit_value(message: Message, state: FSMContext, session: AsyncSess
         await message.answer("❌ Слишком короткое название. Попробуйте ещё раз:", reply_markup=_edit_cancel_keyboard())
         return
 
-    # «-» означает убрать эмодзи
     if field == "emoji" and value == "-":
         value = ""
 
@@ -406,12 +444,13 @@ async def vac_edit_value(message: Message, state: FSMContext, session: AsyncSess
     vacancy = await db.get_vacancy_by_id(session, vacancy_id)
     name    = f"{vacancy['emoji']} {vacancy['name_ru']}".strip() if vacancy else f"#{vacancy_id}"
     logger.info("Вакансия id=%d поле %s обновлено: %r", vacancy_id, field, value)
-
     await state.clear()
-    await message.answer(
-        f"✅ <b>Вакансия обновлена!</b>\n\n💼 {name}\n🇺🇿 {vacancy['name_uz'] if vacancy else '—'}",
-        parse_mode="HTML",
-    )
+
+    try:
+        await message.delete()
+    except TelegramBadRequest:
+        pass
+
     vacancies = await db.get_all_vacancies(session)
     await message.answer(
         _vacancy_list_text(vacancies),
@@ -428,8 +467,15 @@ async def vac_edit_cancel(callback: CallbackQuery, state: FSMContext, session: A
     await state.clear()
     await callback.answer("Редактирование отменено")
     vacancies = await db.get_all_vacancies(session)
-    await callback.message.answer(
-        _vacancy_list_text(vacancies),
-        parse_mode="HTML",
-        reply_markup=_vacancies_keyboard(vacancies),
-    )
+    try:
+        await callback.message.edit_text(
+            _vacancy_list_text(vacancies),
+            parse_mode="HTML",
+            reply_markup=_vacancies_keyboard(vacancies),
+        )
+    except TelegramAPIError:
+        await callback.message.answer(
+            _vacancy_list_text(vacancies),
+            parse_mode="HTML",
+            reply_markup=_vacancies_keyboard(vacancies),
+        )
