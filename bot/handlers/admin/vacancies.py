@@ -10,7 +10,7 @@
       ◀️ К вакансиям → список (edit_text)
     ➕ Добавить → AddVacancy FSM (reply cancel keyboard)
     🔄 Обновить → обновить список (edit_text)
-    ⬅️ Главное меню → вернуться в /admin (reply main menu)
+    ⬅️ Главное меню → вернуться в /admin (inline menu)
 """
 
 import logging
@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.core.config import ADMIN_IDS
 from bot.db import requests as db
 from bot.keyboards.inline import (
+    get_admin_menu_inline_kb,
     get_admin_vacancies_inline_kb,
     get_admin_vacancy_confirm_delete_inline_kb,
     get_admin_vacancy_edit_inline_kb,
@@ -32,7 +33,6 @@ from bot.keyboards.inline import (
 from bot.keyboards.reply import (
     ADMIN_BTN_CANCEL,
     get_admin_cancel_keyboard,
-    get_admin_menu_keyboard,
     remove_keyboard,
 )
 from bot.states import AddVacancy, EditVacancy
@@ -66,14 +66,17 @@ def _vacancy_detail_text(vacancy: dict) -> str:
 
 # ── Публичная точка входа ─────────────────────────────────────────────────────
 
-async def show_vacancies_screen(message: Message, session: AsyncSession) -> None:
-    """Открывает экран вакансий. Вызывается из broadcast.py."""
+async def show_vacancies_screen(
+    message: Message, session: AsyncSession, edit: bool = False
+) -> None:
+    """Открывает экран вакансий. edit=True — редактирует существующее сообщение."""
     vacancies = await db.get_all_vacancies(session)
-    await message.answer(
-        _vac_text(vacancies),
-        parse_mode="HTML",
-        reply_markup=get_admin_vacancies_inline_kb(vacancies),
-    )
+    text = _vac_text(vacancies)
+    kb = get_admin_vacancies_inline_kb(vacancies)
+    if edit:
+        await message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    else:
+        await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 # ── /vacancies ────────────────────────────────────────────────────────────────
@@ -95,8 +98,7 @@ async def cb_vac_list(callback: CallbackQuery, state: FSMContext, session: Async
     await state.clear()
     vacancies = await db.get_all_vacancies(session)
     await callback.message.edit_text(
-        _vac_text(vacancies),
-        parse_mode="HTML",
+        _vac_text(vacancies), parse_mode="HTML",
         reply_markup=get_admin_vacancies_inline_kb(vacancies),
     )
     await callback.answer()
@@ -110,8 +112,7 @@ async def cb_vac_refresh(callback: CallbackQuery, state: FSMContext, session: As
     await state.clear()
     vacancies = await db.get_all_vacancies(session)
     await callback.message.edit_text(
-        _vac_text(vacancies),
-        parse_mode="HTML",
+        _vac_text(vacancies), parse_mode="HTML",
         reply_markup=get_admin_vacancies_inline_kb(vacancies),
     )
     await callback.answer("Обновлено ✅")
@@ -123,11 +124,10 @@ async def cb_vac_home(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         return
     await state.clear()
-    await callback.message.delete()
-    await callback.message.answer(
+    await callback.message.edit_text(
         "🛠 <b>Панель администратора</b>\n\nВыберите раздел:",
         parse_mode="HTML",
-        reply_markup=get_admin_menu_keyboard(),
+        reply_markup=get_admin_menu_inline_kb(),
     )
     await callback.answer()
 
@@ -146,8 +146,7 @@ async def cb_vac_select(callback: CallbackQuery, state: FSMContext, session: Asy
         return
     await state.update_data(selected_vacancy_id=vacancy_id)
     await callback.message.edit_text(
-        _vacancy_detail_text(vacancy),
-        parse_mode="HTML",
+        _vacancy_detail_text(vacancy), parse_mode="HTML",
         reply_markup=get_admin_vacancy_item_inline_kb(vacancy_id, vacancy["is_active"]),
     )
     await callback.answer()
@@ -167,15 +166,14 @@ async def cb_vac_toggle(callback: CallbackQuery, session: AsyncSession) -> None:
         await callback.answer("Вакансия не найдена", show_alert=True)
         return
     await callback.message.edit_text(
-        _vacancy_detail_text(vacancy),
-        parse_mode="HTML",
+        _vacancy_detail_text(vacancy), parse_mode="HTML",
         reply_markup=get_admin_vacancy_item_inline_kb(vacancy_id, is_active),
     )
     await callback.answer("✅ Включена" if is_active else "❌ Выключена")
     logger.info("Вакансия id=%d → is_active=%s", vacancy_id, is_active)
 
 
-# ── Callback: edit (показ выбора поля) ───────────────────────────────────────
+# ── Callback: edit ────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data.startswith("vac:edit:"))
 async def cb_vac_edit(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
@@ -198,7 +196,7 @@ async def cb_vac_edit(callback: CallbackQuery, state: FSMContext, session: Async
     await callback.answer()
 
 
-# ── Callback: выбор конкретного поля для ввода ────────────────────────────────
+# ── Callback: editfield ───────────────────────────────────────────────────────
 
 @router.callback_query(F.data.startswith("vac:editfield:"))
 async def cb_vac_editfield(callback: CallbackQuery, state: FSMContext) -> None:
@@ -217,7 +215,6 @@ async def cb_vac_editfield(callback: CallbackQuery, state: FSMContext) -> None:
     hint = "\nОтправьте <code>-</code> чтобы убрать эмодзи." if field == "emoji" else ""
     await state.update_data(selected_vacancy_id=vacancy_id, edit_field=field)
     await state.set_state(EditVacancy.waiting_value)
-    # Отправляем новое сообщение для текстового ввода
     await callback.message.answer(
         f"✏️ Введите новое {label}:{hint}",
         parse_mode="HTML",
@@ -226,7 +223,7 @@ async def cb_vac_editfield(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
-# ── Callback: delete (запрос подтверждения) ───────────────────────────────────
+# ── Callback: delete ──────────────────────────────────────────────────────────
 
 @router.callback_query(F.data.startswith("vac:delete:"))
 async def cb_vac_delete(callback: CallbackQuery, session: AsyncSession) -> None:
@@ -248,7 +245,7 @@ async def cb_vac_delete(callback: CallbackQuery, session: AsyncSession) -> None:
     await callback.answer()
 
 
-# ── Callback: подтверждение удаления ─────────────────────────────────────────
+# ── Callback: confirm_delete ──────────────────────────────────────────────────
 
 @router.callback_query(F.data.startswith("vac:confirm_delete:"))
 async def cb_vac_confirm_delete(
@@ -272,7 +269,7 @@ async def cb_vac_confirm_delete(
     await callback.answer("Удалено")
 
 
-# ── Callback: добавить вакансию ───────────────────────────────────────────────
+# ── Callback: add ─────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "vac:add")
 async def cb_vac_add(callback: CallbackQuery, state: FSMContext) -> None:
@@ -306,8 +303,7 @@ async def vac_add_name_ru(message: Message, state: FSMContext, session: AsyncSes
     await state.set_state(AddVacancy.waiting_name_uz)
     await message.answer(
         "➕ <b>Новая вакансия</b>\n\n<b>Шаг 2/3.</b> Введите название на <b>узбекском</b>:",
-        parse_mode="HTML",
-        reply_markup=get_admin_cancel_keyboard(),
+        parse_mode="HTML", reply_markup=get_admin_cancel_keyboard(),
     )
 
 
@@ -327,8 +323,7 @@ async def vac_add_name_uz(message: Message, state: FSMContext, session: AsyncSes
     await state.set_state(AddVacancy.waiting_emoji)
     await message.answer(
         "➕ <b>Новая вакансия</b>\n\n<b>Шаг 3/3.</b> Отправьте эмодзи.\nИли /skip для пропуска.",
-        parse_mode="HTML",
-        reply_markup=get_admin_cancel_keyboard(),
+        parse_mode="HTML", reply_markup=get_admin_cancel_keyboard(),
     )
 
 
@@ -381,10 +376,8 @@ async def vac_save_field(message: Message, state: FSMContext, session: AsyncSess
     value = (message.text or "").strip()
 
     if field in ("name_ru", "name_uz") and len(value) < 2:
-        await message.answer(
-            "❌ Слишком короткое название. Попробуйте ещё раз:",
-            reply_markup=get_admin_cancel_keyboard(),
-        )
+        await message.answer("❌ Слишком короткое название. Попробуйте ещё раз:",
+                             reply_markup=get_admin_cancel_keyboard())
         return
     if field == "emoji" and value == "-":
         value = ""
@@ -401,14 +394,10 @@ async def vac_save_field(message: Message, state: FSMContext, session: AsyncSess
     )
 
 
-# ── Вспомогательная функция ───────────────────────────────────────────────────
-
 async def _send_vac_list(message: Message, session: AsyncSession) -> None:
-    """Отправляет список вакансий с inline-клавиатурой, убирая reply-клавиатуру."""
     vacancies = await db.get_all_vacancies(session)
     await message.answer("⏳", reply_markup=remove_keyboard())
     await message.answer(
-        _vac_text(vacancies),
-        parse_mode="HTML",
+        _vac_text(vacancies), parse_mode="HTML",
         reply_markup=get_admin_vacancies_inline_kb(vacancies),
     )
