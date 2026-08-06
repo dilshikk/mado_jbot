@@ -1,14 +1,12 @@
 # bot/handlers/admin/metro_stations.py
 """Раздел «Метро» в административной панели.
 
-Навигация (стек экранов — только Reply Keyboard):
+Навигация (Reply Keyboard для списков + FSM):
   Главное меню → show_metro_home()
-    Нажать линию → экран станций
-      Нажать станцию → экран станции (toggle / delete)
-        ◀️ К станциям
-      ➕ Добавить в эту линию → AddStation FSM
-    ➕ Добавить станцию → выбор линии → AddStation FSM
-    ⬅️ Назад → Главное меню
+    Выбор линии → экран станций
+      Станция → экран станции (toggle / delete)
+      ➕ Добавить в линию → FSM
+    ⬅️ Назад → Главное меню (inline)
 """
 
 import logging
@@ -22,11 +20,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.core.config import ADMIN_IDS
 from bot.db import requests as db
+from bot.keyboards.inline import get_admin_menu_inline_kb
 from bot.keyboards.reply import (
     ADMIN_BTN_BACK,
     ADMIN_BTN_CANCEL,
     get_admin_cancel_keyboard,
-    get_admin_menu_keyboard,
     get_admin_metro_lines_kb,
     get_admin_metro_stations_kb,
     get_admin_station_confirm_delete_kb,
@@ -37,8 +35,6 @@ from bot.keyboards.reply import (
 router = Router()
 logger = logging.getLogger(__name__)
 
-# ── Линии ─────────────────────────────────────────────────────────────────────
-
 LINES: dict[str, tuple[str, str, str]] = {
     "red":    ("🔴", "Чиланзарская",              "Chilonzor liniyasi"),
     "green":  ("🟢", "Юнусабадская",              "Yunusobod liniyasi"),
@@ -46,7 +42,6 @@ LINES: dict[str, tuple[str, str, str]] = {
     "orange": ("🟠", "30-летия независимости",     "Mustaqillik 30-yilligi liniyasi"),
 }
 
-# Кнопки линий (текст → ключ)
 _LINE_BUTTONS: dict[str, str] = {
     "🔴 Чиланзарская":           "red",
     "🟢 Юнусабадская":           "green",
@@ -54,7 +49,6 @@ _LINE_BUTTONS: dict[str, str] = {
     "🟠 30-летия независимости":  "orange",
 }
 
-# Кнопки раздела
 _BTN_ADD_STATION       = "➕ Добавить станцию"
 _BTN_ADD_TO_LINE       = "➕ Добавить в эту линию"
 _BTN_REFRESH           = "🔄 Обновить"
@@ -67,7 +61,7 @@ _BTN_CONFIRM_DELETE    = "✅ Да, удалить станцию"
 
 
 class AddStation(StatesGroup):
-    waiting_line    = State()  # только при добавлении без выбора линии
+    waiting_line    = State()
     waiting_name_ru = State()
     waiting_name_uz = State()
 
@@ -75,8 +69,6 @@ class AddStation(StatesGroup):
 def _is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
-
-# ── Хелперы ───────────────────────────────────────────────────────────────────
 
 def _metro_home_text(total: int, active: int) -> str:
     return (
@@ -101,16 +93,16 @@ async def _get_station_by_label(label: str, line: str, session: AsyncSession) ->
 
 # ── Публичная точка входа ─────────────────────────────────────────────────────
 
-async def show_metro_home(message: Message, session: AsyncSession) -> None:
+async def show_metro_home(message: Message, session: AsyncSession, edit: bool = False) -> None:
     """Открывает главный экран раздела «Метро»."""
     total  = await db.count_metro_stations(session)
     active = await db.count_metro_stations(session, active_only=True)
+    text   = _metro_home_text(total, active)
+    if edit:
+        # Переходим из inline-меню: удаляем inline-сообщение, показываем reply
+        await message.delete()
     await message.answer("⏳", reply_markup=remove_keyboard())
-    await message.answer(
-        _metro_home_text(total, active),
-        parse_mode="HTML",
-        reply_markup=get_admin_metro_lines_kb(),
-    )
+    await message.answer(text, parse_mode="HTML", reply_markup=get_admin_metro_lines_kb())
 
 
 # ── /metro_stations ───────────────────────────────────────────────────────────
@@ -122,7 +114,7 @@ async def cmd_metro_stations(message: Message, session: AsyncSession) -> None:
     await show_metro_home(message, session)
 
 
-# ── Главный экран метро ───────────────────────────────────────────────────────
+# ── Обновить список линий ─────────────────────────────────────────────────────
 
 @router.message(F.text == _BTN_REFRESH)
 async def metro_refresh(message: Message, state: FSMContext, session: AsyncSession) -> None:
@@ -131,22 +123,22 @@ async def metro_refresh(message: Message, state: FSMContext, session: AsyncSessi
     await state.clear()
     total  = await db.count_metro_stations(session)
     active = await db.count_metro_stations(session, active_only=True)
-    await message.answer(
-        _metro_home_text(total, active),
-        parse_mode="HTML",
-        reply_markup=get_admin_metro_lines_kb(),
-    )
+    await message.answer(_metro_home_text(total, active), parse_mode="HTML",
+                         reply_markup=get_admin_metro_lines_kb())
 
+
+# ── Назад → Главное меню (теперь inline) ─────────────────────────────────────
 
 @router.message(F.text == ADMIN_BTN_BACK)
 async def metro_back(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
         return
     await state.clear()
+    await message.answer("⏳", reply_markup=remove_keyboard())
     await message.answer(
         "🛠 <b>Панель администратора</b>\n\nВыберите раздел:",
         parse_mode="HTML",
-        reply_markup=get_admin_menu_keyboard(),
+        reply_markup=get_admin_menu_inline_kb(),
     )
 
 
@@ -157,11 +149,8 @@ async def metro_to_lines(message: Message, state: FSMContext, session: AsyncSess
     await state.clear()
     total  = await db.count_metro_stations(session)
     active = await db.count_metro_stations(session, active_only=True)
-    await message.answer(
-        _metro_home_text(total, active),
-        parse_mode="HTML",
-        reply_markup=get_admin_metro_lines_kb(),
-    )
+    await message.answer(_metro_home_text(total, active), parse_mode="HTML",
+                         reply_markup=get_admin_metro_lines_kb())
 
 
 # ── Экран линии ───────────────────────────────────────────────────────────────
@@ -185,19 +174,15 @@ async def metro_show_line(message: Message, state: FSMContext, session: AsyncSes
     )
 
 
-# ── Кнопка «Добавить станцию» с выбором линии ─────────────────────────────────
+# ── Добавить станцию ──────────────────────────────────────────────────────────
 
 @router.message(F.text == _BTN_ADD_STATION)
 async def metro_add_start(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
         return
-    # Выбор линии — через те же кнопки линий, но в состоянии waiting_line
     await state.set_state(AddStation.waiting_line)
-    await message.answer(
-        "➕ <b>Новая станция</b>\n\n<b>Шаг 1/3.</b> Выберите линию:",
-        parse_mode="HTML",
-        reply_markup=get_admin_metro_lines_kb(),
-    )
+    await message.answer("➕ <b>Новая станция</b>\n\n<b>Шаг 1/3.</b> Выберите линию:",
+                         parse_mode="HTML", reply_markup=get_admin_metro_lines_kb())
 
 
 @router.message(AddStation.waiting_line, F.text.in_(_LINE_BUTTONS))
@@ -212,12 +197,9 @@ async def metro_add_got_line(message: Message, state: FSMContext) -> None:
         f"➕ <b>Новая станция</b> | {emoji} {name_ru}\n\n"
         f"<b>Шаг 2/3.</b> Введите название на <b>русском</b>:\n"
         f"Например: <code>Алмазар</code>",
-        parse_mode="HTML",
-        reply_markup=get_admin_cancel_keyboard(),
+        parse_mode="HTML", reply_markup=get_admin_cancel_keyboard(),
     )
 
-
-# ── Кнопка «Добавить в эту линию» ─────────────────────────────────────────────
 
 @router.message(F.text == _BTN_ADD_TO_LINE)
 async def metro_add_to_current_line(message: Message, state: FSMContext) -> None:
@@ -234,12 +216,9 @@ async def metro_add_to_current_line(message: Message, state: FSMContext) -> None
     await message.answer(
         f"➕ <b>Новая станция</b> | {emoji} {name_ru}\n\n"
         f"<b>Шаг 2/3.</b> Введите название на <b>русском</b>:",
-        parse_mode="HTML",
-        reply_markup=get_admin_cancel_keyboard(),
+        parse_mode="HTML", reply_markup=get_admin_cancel_keyboard(),
     )
 
-
-# ── AddStation FSM ─────────────────────────────────────────────────────────────
 
 @router.message(AddStation.waiting_name_ru, F.text)
 async def metro_got_name_ru(message: Message, state: FSMContext) -> None:
@@ -256,12 +235,10 @@ async def metro_got_name_ru(message: Message, state: FSMContext) -> None:
     await state.update_data(new_station_name_ru=text)
     await state.set_state(AddStation.waiting_name_uz)
     await message.answer(
-        f"➕ <b>Новая станция</b>\n\n"
-        f"✅ Русское: <b>{text}</b>\n\n"
+        f"➕ <b>Новая станция</b>\n\n✅ Русское: <b>{text}</b>\n\n"
         f"<b>Шаг 3/3.</b> Введите название на <b>узбекском</b>:\n"
         f"Например: <code>Olmazor</code>",
-        parse_mode="HTML",
-        reply_markup=get_admin_cancel_keyboard(),
+        parse_mode="HTML", reply_markup=get_admin_cancel_keyboard(),
     )
 
 
@@ -293,7 +270,7 @@ async def metro_got_name_uz(message: Message, state: FSMContext, session: AsyncS
     )
 
 
-# ── Экран станции ──────────────────────────────────────────────────────────────
+# ── К станциям ────────────────────────────────────────────────────────────────
 
 @router.message(F.text == _BTN_TO_STATIONS)
 async def metro_to_stations(message: Message, state: FSMContext, session: AsyncSession) -> None:
@@ -316,11 +293,10 @@ async def metro_to_stations(message: Message, state: FSMContext, session: AsyncS
     )
 
 
-# ── Нажатие на станцию из списка ──────────────────────────────────────────────
+# ── Нажатие на станцию ────────────────────────────────────────────────────────
 
 @router.message(F.text)
 async def metro_item_select(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    """Перехватывает нажатие на кнопку-станцию из списка."""
     if not _is_admin(message.from_user.id):
         return
     data = await state.get_data()
@@ -341,7 +317,7 @@ async def metro_item_select(message: Message, state: FSMContext, session: AsyncS
     )
 
 
-# ── Действия со станцией ───────────────────────────────────────────────────────
+# ── Toggle ────────────────────────────────────────────────────────────────────
 
 @router.message(F.text.in_({_BTN_TOGGLE_ON, _BTN_TOGGLE_OFF}))
 async def metro_toggle(message: Message, state: FSMContext, session: AsyncSession) -> None:
@@ -366,6 +342,8 @@ async def metro_toggle(message: Message, state: FSMContext, session: AsyncSessio
     )
     logger.info("Станция id=%d → active=%s", station_id, new_active)
 
+
+# ── Delete ────────────────────────────────────────────────────────────────────
 
 @router.message(F.text == _BTN_DELETE)
 async def metro_delete_prompt(message: Message, state: FSMContext, session: AsyncSession) -> None:
@@ -402,7 +380,6 @@ async def metro_delete_confirm(message: Message, state: FSMContext, session: Asy
     await state.update_data(selected_station_id=None)
     stations = await db.get_all_metro_stations_by_line(session, line)
     await message.answer(
-        f"✅ «{name}» удалена.",
-        parse_mode="HTML",
+        f"✅ «{name}» удалена.", parse_mode="HTML",
         reply_markup=get_admin_metro_stations_kb(stations),
     )
