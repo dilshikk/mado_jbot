@@ -10,3 +10,5 @@ asyncpg>=0.30
 pydantic-settings>=2.4
 aiohttp>=3.9
 alembic>=1.13
+pytest>=8.0
+pytest-asyncio>=0.24
