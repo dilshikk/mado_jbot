@@ -125,3 +125,65 @@ def get_hr_hold_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="▶️ Вернуть в работу", callback_data=f"hr_accept:{candidate_id}"),
         InlineKeyboardButton(text="❌ Отклонить", callback_data=f"hr_reject:{candidate_id}"),
     ]])
+
+
+# ─── Admin: Вакансии (Inline) ─────────────────────────────────────────────────
+
+def get_admin_vacancies_inline_kb(vacancies: list[dict]) -> InlineKeyboardMarkup:
+    """Список вакансий — каждая вакансия кнопкой, плюс действия."""
+    rows: list[list[InlineKeyboardButton]] = []
+    pair: list[InlineKeyboardButton] = []
+    for v in vacancies:
+        status = "✅" if v["is_active"] else "❌"
+        parts = [status]
+        if v.get("emoji"):
+            parts.append(v["emoji"])
+        parts.append(v["name_ru"])
+        label = " ".join(parts)
+        pair.append(InlineKeyboardButton(text=label, callback_data=f"vac:select:{v['id']}"))
+        if len(pair) == 2:
+            rows.append(pair)
+            pair = []
+    if pair:
+        rows.append(pair)
+    rows.append([
+        InlineKeyboardButton(text="➕ Добавить", callback_data="vac:add"),
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="vac:refresh"),
+    ])
+    rows.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="vac:home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_admin_vacancy_item_inline_kb(vacancy_id: int, is_active: bool) -> InlineKeyboardMarkup:
+    """Экран отдельной вакансии: действия."""
+    toggle_text = "❌ Выключить" if is_active else "✅ Включить"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=toggle_text, callback_data=f"vac:toggle:{vacancy_id}")],
+        [
+            InlineKeyboardButton(text="✏️ Изменить", callback_data=f"vac:edit:{vacancy_id}"),
+            InlineKeyboardButton(text="🗑 Удалить", callback_data=f"vac:delete:{vacancy_id}"),
+        ],
+        [InlineKeyboardButton(text="◀️ К вакансиям", callback_data="vac:list")],
+    ])
+
+
+def get_admin_vacancy_edit_inline_kb(vacancy_id: int) -> InlineKeyboardMarkup:
+    """Выбор поля для редактирования вакансии."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🇷🇺 Название (рус)", callback_data=f"vac:editfield:{vacancy_id}:name_ru"),
+            InlineKeyboardButton(text="🇺🇿 Название (узб)", callback_data=f"vac:editfield:{vacancy_id}:name_uz"),
+        ],
+        [InlineKeyboardButton(text="😊 Эмодзи", callback_data=f"vac:editfield:{vacancy_id}:emoji")],
+        [InlineKeyboardButton(text="◀️ К вакансиям", callback_data="vac:list")],
+    ])
+
+
+def get_admin_vacancy_confirm_delete_inline_kb(vacancy_id: int) -> InlineKeyboardMarkup:
+    """Подтверждение удаления вакансии."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"vac:confirm_delete:{vacancy_id}"),
+            InlineKeyboardButton(text="◀️ Назад", callback_data=f"vac:select:{vacancy_id}"),
+        ],
+    ])
