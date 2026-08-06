@@ -10,7 +10,6 @@
 
 Итого: 5 запросов вместо 9. Все ответы — строгий JSON.
 Итоговый балл считается в Python (мотивация 30%, опыт 30%, коммуникация 20%, риски 20%).
-Language AI включается только для должностей, требующих грамотного общения.
 """
 
 from __future__ import annotations
@@ -21,8 +20,8 @@ import logging
 from typing import Any
 
 from bot.ai.client import cf_chat
-from bot.ai.models import LLAMA_70B, LLAMA_8B
-from bot.ai.parser import extract_json
+from bot.ai.models import LLAMA_70B
+from bot.ai.parser import extract_json, extract_text
 from bot.ai.prompts import (
     COMMUNICATION_SYSTEM,
     HIRING_DECISION_SYSTEM,
@@ -81,24 +80,39 @@ async def _run_json_agent(
         if not result:
             return {"error": "no_response"}
 
-        # Workers AI возвращает {"result": {"response": "..."}}
-        text: str = ""
-        if isinstance(result, dict):
-            inner = result.get("result", result)
-            text = inner.get("response", "") if isinstance(inner, dict) else str(inner)
-        else:
-            text = str(result)
+        # ── Извлекаем текст через надёжный extract_text ───────────────────
+        # extract_text корректно обрабатывает все форматы CF API:
+        # str / dict / list внутри result.response
+        text = extract_text(result)
 
-        # Используем надёжный парсер с тремя уровнями fallback из parser.py
+        if not text:
+            logger.warning("_run_json_agent: extract_text вернул None, result=%r", result)
+            return {"error": "no_text"}
+
+        # ── Если extract_text вернул dict-like строку — пробуем json.loads ─
+        # Иногда CF возвращает уже готовый dict в result.response
+        if isinstance(result, dict):
+            inner = result.get("result", {})
+            if isinstance(inner, dict):
+                response = inner.get("response")
+                # Если response уже dict — возвращаем его напрямую (без extract_json!)
+                if isinstance(response, dict):
+                    return response
+
+        # ── Стандартный путь: текст → extract_json ────────────────────────
         parsed = extract_json(text)
         if "error" not in parsed:
             return parsed
 
-        logger.warning("Агент не вернул JSON: %s | ошибка: %s", text[:200], parsed.get("error"))
+        logger.warning(
+            "_run_json_agent: не удалось распарсить JSON | text=%s | ошибка=%s",
+            text[:200],
+            parsed.get("error"),
+        )
         return parsed
 
     except Exception as exc:
-        logger.error("Агент упал: %s", exc, exc_info=True)
+        logger.error("_run_json_agent упал: %s", exc, exc_info=True)
         return {"error": "exception", "detail": str(exc)}
 
 def _safe_score(raw: object) -> float:
@@ -108,22 +122,6 @@ def _safe_score(raw: object) -> float:
     except (TypeError, ValueError):
         return 0.0
     return max(0.0, min(10.0, value))
-
-def _compute_total_score(decision: Any) -> float:
-    """Считает итоговый балл из критериев по весам. Делается в Python, не в AI."""
-    scores = decision.scores if hasattr(decision, "scores") else decision.get("scores", {})
-    if hasattr(scores, "__dict__"):
-        # Pydantic-модель
-        raw_scores = {k: getattr(scores, k) for k in _WEIGHTS}
-    else:
-        raw_scores = scores  # type: ignore[assignment]
-
-    total = 0.0
-    for key, weight in _WEIGHTS.items():
-        criterion = raw_scores.get(key, {}) if isinstance(raw_scores, dict) else getattr(raw_scores, key, {})
-        score = criterion.get("score", 0) if isinstance(criterion, dict) else getattr(criterion, "score", 0)
-        total += _safe_score(score) * weight
-    return round(total, 2)
 
 def _is_language_sensitive(form_data: dict) -> bool:
     """Нужна ли оценка грамотности для данной позиции."""
@@ -151,8 +149,6 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
     context = _base_context(form_data, qa_log)
 
     # ── Уровень 2: Resume Extractor ───────────────────────────────────────
-    # max_tokens=900: вложенный JSON (candidate + experience.jobs[] + skills + key_answers[])
-    # при 400 токенах JSON гарантированно обрывался на середине
     resume_data = await _run_json_agent(RESUME_SYSTEM, context, max_tokens=900)
 
     # ── Уровень 3: Communication + Integrity параллельно ─────────────────
