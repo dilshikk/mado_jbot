@@ -13,7 +13,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.core.config import ADMIN_CHAT_ID, ADMIN_IDS
+from bot.core.config import ADMIN_IDS
 from bot.db import requests as db
 from bot.filters.common import IsCancelMessage, IsPrivateChat
 from bot import keyboards as kb
@@ -22,7 +22,7 @@ from bot.locks import submission_lock
 from bot.services.ai import screen_application
 from bot.services.gsheets import append_to_sheet
 from bot.states import Form
-from bot.utils.formatters import build_hr_resume_text, build_resume_text
+from bot.utils.formatters import build_resume_text
 
 router = Router()
 router.message.filter(IsPrivateChat())
@@ -307,7 +307,11 @@ async def _do_save_and_start_interview(
     user,
     bot: Bot,
 ) -> None:
-    """Сохраняет анкету, отправляет HR и запускает AI-интервью с кандидатом."""
+    """Сохраняет анкету, запускает фоновые задачи и AI-интервью.
+
+    HR-уведомление НЕ отправляется здесь — оно уйдёт после интервью
+    в виде объединённой карточки (анкета + AI-анализ).
+    """
     app_id = await db.save_application(
         session,
         user_id=user.id,
@@ -341,37 +345,7 @@ async def _do_save_and_start_interview(
         last_name=user.last_name,
     )
 
-    # Уведомляем HR о новой анкете
-    if ADMIN_CHAT_ID:
-        resume_text = build_hr_resume_text(data, lang, user)
-        try:
-            if data.get("photo_file_id"):
-                await bot.send_photo(
-                    ADMIN_CHAT_ID,
-                    photo=data["photo_file_id"],
-                    caption=resume_text,
-                    reply_markup=kb.get_hr_action_keyboard(
-                        phone=data.get("phone", ""),
-                        username=user.username or "",
-                        candidate_id=user.id,
-                    ),
-                    parse_mode="HTML",
-                )
-            else:
-                await bot.send_message(
-                    ADMIN_CHAT_ID,
-                    text=resume_text,
-                    reply_markup=kb.get_hr_action_keyboard(
-                        phone=data.get("phone", ""),
-                        username=user.username or "",
-                        candidate_id=user.id,
-                    ),
-                    parse_mode="HTML",
-                )
-        except TelegramAPIError as exc:
-            logger.error("_do_save_and_start_interview: failed to notify HR: %s", exc)
-
-    # Фоновые задачи (Google Sheets, AI скрининг)
+    # Фоновые задачи: Google Sheets и AI-скрининг резюме (не интервью)
     try:
         await asyncio.gather(
             append_to_sheet(data, user),
@@ -381,7 +355,7 @@ async def _do_save_and_start_interview(
     except Exception as exc:
         logger.error("_do_save_and_start_interview: post-save tasks failed: %s", exc)
 
-    # Запускаем AI-интервью
+    # Запускаем AI-интервью — HR-карточка уйдёт после его завершения
     from bot.handlers.user.interview import start_interview  # noqa: PLC0415
     await start_interview(
         message=message,
