@@ -1,5 +1,7 @@
 from bot.keyboards.reply import (
-    get_admin_menu_keyboard,
+    # Утилита
+    remove_keyboard,
+    # Пользовательские
     get_branch_keyboard,
     get_cancel_keyboard,
     get_citizenship_keyboard,
@@ -10,7 +12,24 @@ from bot.keyboards.reply import (
     get_metro_keyboard,
     get_phone_keyboard,
     get_skip_cancel_keyboard,
-    remove_keyboard,
+    # Административные
+    ADMIN_BTN_BACK,
+    ADMIN_BTN_CANCEL,
+    get_admin_menu_keyboard,
+    get_admin_back_keyboard,
+    get_admin_cancel_keyboard,
+    get_admin_skip_cancel_keyboard,
+    get_broadcast_photo_kb,
+    get_broadcast_url_kb,
+    get_broadcast_preview_kb,
+    get_admin_vacancies_kb,
+    get_admin_vacancy_item_kb,
+    get_admin_vacancy_confirm_delete_kb,
+    get_admin_vacancy_edit_kb,
+    get_admin_metro_lines_kb,
+    get_admin_metro_stations_kb,
+    get_admin_station_item_kb,
+    get_admin_station_confirm_delete_kb,
 )
 from bot.keyboards.inline import (
     get_hr_action_keyboard,
@@ -35,8 +54,9 @@ from bot.keyboards.inline_form import (
 )
 
 __all__ = [
-    # Reply keyboards (свободный ввод и главное меню)
-    "get_admin_menu_keyboard",
+    # Утилита
+    "remove_keyboard",
+    # Пользовательские Reply
     "get_branch_keyboard",
     "get_cancel_keyboard",
     "get_citizenship_keyboard",
@@ -47,8 +67,25 @@ __all__ = [
     "get_metro_keyboard",
     "get_phone_keyboard",
     "get_skip_cancel_keyboard",
-    "remove_keyboard",
-    # Inline keyboards (HR и метро)
+    # Административные Reply (экранный стек)
+    "ADMIN_BTN_BACK",
+    "ADMIN_BTN_CANCEL",
+    "get_admin_menu_keyboard",
+    "get_admin_back_keyboard",
+    "get_admin_cancel_keyboard",
+    "get_admin_skip_cancel_keyboard",
+    "get_broadcast_photo_kb",
+    "get_broadcast_url_kb",
+    "get_broadcast_preview_kb",
+    "get_admin_vacancies_kb",
+    "get_admin_vacancy_item_kb",
+    "get_admin_vacancy_confirm_delete_kb",
+    "get_admin_vacancy_edit_kb",
+    "get_admin_metro_lines_kb",
+    "get_admin_metro_stations_kb",
+    "get_admin_station_item_kb",
+    "get_admin_station_confirm_delete_kb",
+    # Inline (HR и метро)
     "get_hr_action_keyboard",
     "get_hr_hold_keyboard",
     "get_metro_lines_keyboard",
@@ -56,7 +93,7 @@ __all__ = [
     "get_post_interview_keyboard",
     "get_readiness_inline_keyboard",
     "get_score_keyboard",
-    # Inline keyboards (форма анкеты)
+    # Inline (форма анкеты)
     "get_confirmation_keyboard",
     "get_evening_shifts_keyboard",
     "get_experience_yn_keyboard",
