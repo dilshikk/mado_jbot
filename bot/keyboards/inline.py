@@ -7,7 +7,6 @@ from bot.core.config import SHEET_URL
 _EMPTY_USERNAME: frozenset[str] = frozenset({"отсутствует", "none", ""})
 
 # ─── Линии метро ─────────────────────────────────────────────
-# line_id → (emoji, name_ru, name_uz)
 METRO_LINES: dict[str, tuple[str, str, str]] = {
     "red": ("🔴", "Чиланзарская", "Chilonzor"),
     "blue": ("🔵", "Узбекистанская", "O'zbekiston"),
@@ -22,32 +21,20 @@ def _cancel_text(lang: str) -> str:
     return "Bekor qilish" if lang == "uz" else "Отменить заполнение"
 
 def get_metro_lines_keyboard(lang: str) -> InlineKeyboardMarkup:
-    """Первый шаг — выбор линии метро."""
     rows = []
     for line_id, (emoji, name_ru, name_uz) in METRO_LINES.items():
         name = name_uz if lang == "uz" else name_ru
-        rows.append([InlineKeyboardButton(
-            text=f"{emoji} {name}",
-            callback_data=f"metro_line:{line_id}",
-        )])
+        rows.append([InlineKeyboardButton(text=f"{emoji} {name}", callback_data=f"metro_line:{line_id}")])
     rows.append([InlineKeyboardButton(text=_skip_text(lang), callback_data="metro_line:skip")])
     rows.append([InlineKeyboardButton(text=_cancel_text(lang), callback_data="metro_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-def get_metro_stations_keyboard(
-    stations: list[dict],
-    line: str,
-    lang: str,
-) -> InlineKeyboardMarkup:
-    """Второй шаг — выбор станции на выбранной линии."""
+def get_metro_stations_keyboard(stations: list[dict], line: str, lang: str) -> InlineKeyboardMarkup:
     name_key = "name_uz" if lang == "uz" else "name_ru"
     rows: list[list[InlineKeyboardButton]] = []
     pair: list[InlineKeyboardButton] = []
     for s in sorted(stations, key=lambda x: x.get("sort_order", 0)):
-        pair.append(InlineKeyboardButton(
-            text=s[name_key],
-            callback_data=f"metro_station:{s['id']}",
-        ))
+        pair.append(InlineKeyboardButton(text=s[name_key], callback_data=f"metro_station:{s['id']}"))
         if len(pair) == 2:
             rows.append(pair)
             pair = []
@@ -62,7 +49,6 @@ def get_metro_stations_keyboard(
 # ─── Форма анкеты — Inline ────────────────────────────────────────────────────
 
 def get_readiness_inline_keyboard(lang: str) -> InlineKeyboardMarkup:
-    """Готовность к работе."""
     from bot.lexicon import LOCALIZATION  # noqa: PLC0415
     t = LOCALIZATION.get(lang, LOCALIZATION["ru"])
     cancel = _cancel_text(lang)
@@ -91,14 +77,12 @@ def get_readiness_inline_keyboard(lang: str) -> InlineKeyboardMarkup:
 # ─── HR-клавиатуры ───────────────────────────────────────────
 
 def get_score_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
-    """Кнопки оценки кандидата 1–5 звёзд."""
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text=f"{i}⭐", callback_data=f"score:{i}:{candidate_id}")
         for i in range(1, 6)
     ]])
 
 def get_post_interview_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
-    """Клавиатура после собеседования."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🏆 Принять на работу", callback_data=f"hr_hire:{candidate_id}"),
@@ -127,10 +111,29 @@ def get_hr_hold_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
     ]])
 
 
+# ─── Admin: Главное меню (Inline) ────────────────────────────────────────────
+
+def get_admin_menu_inline_kb() -> InlineKeyboardMarkup:
+    """Главное меню панели администратора."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📢 Рассылка",        callback_data="admin:broadcast"),
+            InlineKeyboardButton(text="💼 Вакансии",        callback_data="admin:vacancies"),
+        ],
+        [
+            InlineKeyboardButton(text="🚇 Метро",           callback_data="admin:metro"),
+            InlineKeyboardButton(text="📊 Дашборд",         callback_data="admin:dashboard"),
+        ],
+        [
+            InlineKeyboardButton(text="👮 Администраторы",  callback_data="admin:adminlist"),
+            InlineKeyboardButton(text="📋 Resend",          callback_data="admin:resend"),
+        ],
+    ])
+
+
 # ─── Admin: Вакансии (Inline) ─────────────────────────────────────────────────
 
 def get_admin_vacancies_inline_kb(vacancies: list[dict]) -> InlineKeyboardMarkup:
-    """Список вакансий — каждая вакансия кнопкой, плюс действия."""
     rows: list[list[InlineKeyboardButton]] = []
     pair: list[InlineKeyboardButton] = []
     for v in vacancies:
@@ -155,7 +158,6 @@ def get_admin_vacancies_inline_kb(vacancies: list[dict]) -> InlineKeyboardMarkup
 
 
 def get_admin_vacancy_item_inline_kb(vacancy_id: int, is_active: bool) -> InlineKeyboardMarkup:
-    """Экран отдельной вакансии: действия."""
     toggle_text = "❌ Выключить" if is_active else "✅ Включить"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=toggle_text, callback_data=f"vac:toggle:{vacancy_id}")],
@@ -168,7 +170,6 @@ def get_admin_vacancy_item_inline_kb(vacancy_id: int, is_active: bool) -> Inline
 
 
 def get_admin_vacancy_edit_inline_kb(vacancy_id: int) -> InlineKeyboardMarkup:
-    """Выбор поля для редактирования вакансии."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🇷🇺 Название (рус)", callback_data=f"vac:editfield:{vacancy_id}:name_ru"),
@@ -180,7 +181,6 @@ def get_admin_vacancy_edit_inline_kb(vacancy_id: int) -> InlineKeyboardMarkup:
 
 
 def get_admin_vacancy_confirm_delete_inline_kb(vacancy_id: int) -> InlineKeyboardMarkup:
-    """Подтверждение удаления вакансии."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"vac:confirm_delete:{vacancy_id}"),
