@@ -41,7 +41,8 @@ async def cf_chat(
     payload = {
         "model": model,
         "messages": messages,
-        "max_tokens": max_tokens,
+        # gpt-5 / gpt-5-mini используют max_completion_tokens вместо max_tokens
+        "max_completion_tokens": max_tokens,
         "temperature": 0.7,
     }
 
