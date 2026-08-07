@@ -125,7 +125,9 @@ async def start_anketa(message: Message, state: FSMContext, lang: str, session: 
             await message.answer(text, parse_mode="HTML")
             return
 
-    await state.update_data(branch=VALID_BRANCH)
+    # Сохраняем lang в FSM сразу — callback-хендлеры (metro, languages и т.д.)
+    # читают lang из state.get_data(), а не из middleware.
+    await state.update_data(branch=VALID_BRANCH, lang=lang)
     await message.answer(LOCALIZATION[lang]["ask_name"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
     await state.set_state(Form.waiting_name)
 
