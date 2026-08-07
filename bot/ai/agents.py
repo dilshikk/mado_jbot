@@ -38,6 +38,8 @@ from bot.ai.prompts import (
 
 logger = logging.getLogger(__name__)
 
+_JSON_FORMAT = {"type": "json_object"}
+
 # Должности, для которых грамотность письменной речи — важный критерий
 _LANGUAGE_SENSITIVE_POSITIONS = {
     "администратор", "hr", "менеджер", "оператор",
@@ -70,6 +72,7 @@ def _base_context(form_data: dict, qa_log: list[dict]) -> str:
 
     return "\n".join(lines)
 
+
 async def _run_json_agent(
     system_prompt: str,
     user_content: str,
@@ -82,7 +85,11 @@ async def _run_json_agent(
         {"role": "user", "content": user_content},
     ]
     try:
-        result = await cf_chat(model, messages, max_tokens=max_tokens)
+        result = await cf_chat(
+            model, messages,
+            max_tokens=max_tokens,
+            response_format=_JSON_FORMAT,
+        )
         if not result:
             return {"error": "no_response"}
 
@@ -112,6 +119,7 @@ async def _run_json_agent(
         logger.error("_run_json_agent упал: %s", exc, exc_info=True)
         return {"error": "exception", "detail": str(exc)}
 
+
 def _safe_score(raw: object) -> float:
     """Приводит произвольное значение к float в диапазоне [0, 10]."""
     try:
@@ -120,10 +128,6 @@ def _safe_score(raw: object) -> float:
         return 0.0
     return max(0.0, min(10.0, value))
 
-def _is_language_sensitive(form_data: dict) -> bool:
-    """Нужна ли оценка грамотности для данной позиции."""
-    position = str(form_data.get("position") or form_data.get("должность", "")).lower()
-    return any(p in position for p in _LANGUAGE_SENSITIVE_POSITIONS)
 
 # ---------------------------------------------------------------------------
 # Основная точка входа
@@ -200,6 +204,7 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
         "summary": summary,
     }
 
+
 # ---------------------------------------------------------------------------
 # Форматирование текстового отчёта (Python, без AI)
 # ---------------------------------------------------------------------------
@@ -220,6 +225,7 @@ _RISK_LABELS = {
     "high": "🔴 Высокий",
 }
 
+
 def _build_summary_text(
     resume: dict,
     decision: dict,
@@ -232,7 +238,7 @@ def _build_summary_text(
     cand = resume.get("candidate", {})
     name = cand.get("name", "—")
     age = cand.get("age", "—")
-    position = cand.get("position", "—")
+    position = cand.get("position_applied") or cand.get("position", "—")
     lines.append(f"👤 {name}, {age} лет — {position}")
 
     total = decision.get("total_score", 0)
