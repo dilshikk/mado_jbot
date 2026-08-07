@@ -41,11 +41,14 @@ class Settings(BaseSettings):
 
     database_url: str = f"sqlite+aiosqlite:///{BASE_DIR / 'database.db'}"
 
-    # ── Cloudflare Workers AI (скрининг анкет) ────────────────────────────
+    # ── OpenAI API ────────────────────────────────────────────────────────
+    openai_api_key: str = ""
+    ai_screening_enabled: bool = True
+
+    # ── Cloudflare (устаревшие поля — оставлены для совместимости .env) ──
     cloudflare_account_id: str = ""
     cloudflare_api_token: str = ""
-    ai_model: str = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
-    ai_screening_enabled: bool = True
+    ai_model: str = "gpt-4o-mini"
 
     @property
     def admin_ids_list(self) -> tuple[int, ...]:
@@ -65,11 +68,7 @@ class Settings(BaseSettings):
 
     @property
     def ai_available(self) -> bool:
-        return (
-            self.ai_screening_enabled
-            and bool(self.cloudflare_account_id)
-            and bool(self.cloudflare_api_token)
-        )
+        return self.ai_screening_enabled and bool(self.openai_api_key)
 
     @property
     def log_level_int(self) -> int:
