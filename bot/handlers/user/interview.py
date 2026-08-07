@@ -1,12 +1,14 @@
 # bot/handlers/user/interview.py
 """FSM-хендлер AI-интервью с кандидатом."""
 
+import asyncio
 import json
 import logging
+from contextlib import suppress
 from datetime import datetime
 
-from aiogram import F, Router
-from aiogram.exceptions import TelegramBadRequest
+from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,7 +44,49 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-async def _send_hr_report(bot, session: AsyncSession, session_id: int, user_id: int) -> None:
+async def _typing_loop(bot: Bot, chat_id: int, stop_event: asyncio.Event) -> None:
+    """Отправляет «печатает...» каждые 4 секунды пока AI думает.
+
+    Telegram сам сбрасывает индикатор через 5 сек, поэтому повторяем каждые 4.
+    """
+    while not stop_event.is_set():
+        with suppress(TelegramAPIError, Exception):
+            await bot.send_chat_action(chat_id=chat_id, action="typing")
+        try:
+            await asyncio.wait_for(asyncio.shield(stop_event.wait()), timeout=4.0)
+        except asyncio.TimeoutError:
+            pass
+
+
+async def _ask_ai_with_typing(
+    bot: Bot,
+    chat_id: int,
+    *,
+    form_data: dict,
+    lang: str,
+    interview_state: dict,
+    last_qa: "dict | None",
+    q_count: int,
+) -> dict:
+    """Запрашивает AI и показывает 'печатает...' весь время ожидания."""
+    stop = asyncio.Event()
+    typing_task = asyncio.create_task(_typing_loop(bot, chat_id, stop))
+    try:
+        result = await get_next_step(
+            form_data=form_data,
+            lang=lang,
+            interview_state=interview_state,
+            last_qa=last_qa,
+            q_count=q_count,
+        )
+    finally:
+        stop.set()
+        with suppress(Exception):
+            await typing_task
+    return result
+
+
+async def _send_hr_report(bot: Bot, session: AsyncSession, session_id: int, user_id: int) -> None:
     """Отправляет итоговый отчёт в HR-чат."""
     interview = await db.get_interview_session(session, session_id)
     if not interview:
@@ -100,7 +144,9 @@ async def start_interview(
     session_id = await db.create_interview_session(session, message.from_user.id)
     interview_state = make_empty_state()
 
-    step = await get_next_step(
+    step = await _ask_ai_with_typing(
+        message.bot,
+        message.chat.id,
         form_data=form_data,
         lang=lang,
         interview_state=interview_state,
@@ -109,8 +155,6 @@ async def start_interview(
     )
     interview_state = step.get("new_state", interview_state)
 
-    # Если AI вернул done/пустой ответ на первом же шаге —
-    # используем fallback-вопрос вместо того, чтобы сразу завершать
     if step.get("done") or not step.get("question"):
         logger.warning(
             "start_interview: AI вернул done/пусто на первом шаге — "
@@ -156,8 +200,9 @@ async def process_answer(message: Message, state: FSMContext, session: AsyncSess
     answer_text = (message.text or "").strip()
     last_qa = {"q": current_q, "a": answer_text}
 
-    # Запрашиваем следующий вопрос (compact state + last Q&A)
-    step = await get_next_step(
+    step = await _ask_ai_with_typing(
+        message.bot,
+        message.chat.id,
         form_data=form_data,
         lang=lang,
         interview_state=interview_state,
@@ -165,7 +210,6 @@ async def process_answer(message: Message, state: FSMContext, session: AsyncSess
         q_count=len(qa_log),
     )
 
-    # Сохраняем ответ в qa_log (нужен для финального пайплайна агентов)
     qa_log.append(last_qa)
     await db.append_qa(session, session_id, qa_log)
 
@@ -211,7 +255,9 @@ async def skip_question(callback: CallbackQuery, state: FSMContext, session: Asy
     skip_text = "— (пропущен)" if lang == "ru" else "— (o'tkazildi)"
     last_qa = {"q": current_q, "a": skip_text}
 
-    step = await get_next_step(
+    step = await _ask_ai_with_typing(
+        callback.bot,
+        callback.message.chat.id,
         form_data=form_data,
         lang=lang,
         interview_state=interview_state,
@@ -283,9 +329,8 @@ async def _finish_interview(
     await message.answer(thanks, parse_mode="HTML")
 
     user_id = message.from_user.id if message.from_user else message.chat.id
+    bot: Bot = message.bot
 
-    # Не запускаем дорогой 5-агентный пайплайн если ответов нет — происходит
-    # только при полном отказе AI на старте.
     if not qa_log:
         logger.warning(
             "_finish_interview: qa_log пуст — пайплайн пропущен (user_id=%d session_id=%d)",
@@ -293,7 +338,7 @@ async def _finish_interview(
         )
         await db.update_interview_session(session, session_id, status="done")
         try:
-            await message.bot.send_message(
+            await bot.send_message(
                 chat_id=ADMIN_CHAT_ID,
                 text=(
                     f"⚠️ Интервью завершено без ответов.\n"
@@ -309,7 +354,7 @@ async def _finish_interview(
     try:
         app = await db.get_latest_application(session, user_id)
         name = (app or {}).get("name", f"user#{user_id}")
-        await message.bot.send_message(
+        await bot.send_message(
             chat_id=ADMIN_CHAT_ID,
             text=f"⏳ AI обрабатывает интервью кандидата {name}... (вопросов: {len(qa_log)})",
             parse_mode="HTML",
@@ -337,7 +382,7 @@ async def _finish_interview(
         summary=reports.get("summary"),
     )
 
-    await _send_hr_report(message.bot, session, session_id, user_id)
+    await _send_hr_report(bot, session, session_id, user_id)
 
 
 def _fallback_question(lang: str, qa_log: list[dict], asked_questions: list[str]) -> str:
