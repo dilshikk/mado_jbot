@@ -125,7 +125,7 @@ async def start_anketa(message: Message, state: FSMContext, lang: str, session: 
             await message.answer(text, parse_mode="HTML")
             return
 
-    # Сохраняем lang в FSM сразу — callback-хендлеры (metro, languages и т.д.)
+    # Сохраняем lang в FSM — callback-хендлеры (metro, languages и т.д.)
     # читают lang из state.get_data(), а не из middleware.
     await state.update_data(branch=VALID_BRANCH, lang=lang)
     await message.answer(LOCALIZATION[lang]["ask_name"], reply_markup=kb.get_cancel_keyboard(lang), parse_mode="HTML")
@@ -245,7 +245,6 @@ async def process_video(message: Message, state: FSMContext, lang: str) -> None:
             return
         await state.update_data(video_file_id=file_id, is_video_note=is_note, video_duration=duration)
 
-    # Показываем сводку анкеты с кнопками подтверждения
     data = await state.get_data()
     summary = build_resume_text(data, lang)
     with suppress(TelegramAPIError):
@@ -266,7 +265,6 @@ async def process_confirmation_callback(
     session: AsyncSession,
     bot: Bot,
 ) -> None:
-    # Отвечаем на callback сразу — до любых await, чтобы не истёк таймаут
     with suppress(TelegramAPIError):
         await callback.answer()
 
@@ -309,11 +307,7 @@ async def _do_save_and_start_interview(
     user,
     bot: Bot,
 ) -> None:
-    """Сохраняет анкету, запускает фоновые задачи и AI-интервью.
-
-    HR-уведомление НЕ отправляется здесь — оно уйдёт после интервью
-    в виде объединённой карточки (анкета + AI-анализ).
-    """
+    """Сохраняет анкету, запускает фоновые задачи и AI-интервью."""
     app_id = await db.save_application(
         session,
         user_id=user.id,
@@ -347,15 +341,18 @@ async def _do_save_and_start_interview(
         last_name=user.last_name,
     )
 
-    # Фоновые задачи: Google Sheets и AI-скрининг резюме (не интервью)
+    # Google Sheets — синхронная функция, запускаем в executor чтобы не блокировать event loop
     try:
-        await asyncio.gather(
-            append_to_sheet(data, user),
-            screen_application(bot, session, app_id, data, user),
-            return_exceptions=True,
-        )
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, append_to_sheet, data, user)
     except Exception as exc:
-        logger.error("_do_save_and_start_interview: post-save tasks failed: %s", exc)
+        logger.error("append_to_sheet failed: %s", exc)
+
+    # AI-скрининг резюме — асинхронная задача
+    try:
+        await screen_application(bot, session, app_id, data, user)
+    except Exception as exc:
+        logger.error("screen_application failed: %s", exc)
 
     # Запускаем AI-интервью — HR-карточка уйдёт после его завершения
     from bot.handlers.user.interview import start_interview  # noqa: PLC0415
