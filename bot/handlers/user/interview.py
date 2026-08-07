@@ -45,10 +45,7 @@ def _now() -> str:
 
 
 async def _typing_loop(bot: Bot, chat_id: int, stop_event: asyncio.Event) -> None:
-    """Отправляет «печатает...» каждые 4 секунды пока AI думает.
-
-    Telegram сам сбрасывает индикатор через 5 сек, поэтому повторяем каждые 4.
-    """
+    """sends typing action every 4s while AI is thinking."""
     while not stop_event.is_set():
         with suppress(TelegramAPIError, Exception):
             await bot.send_chat_action(chat_id=chat_id, action="typing")
@@ -68,7 +65,7 @@ async def _ask_ai_with_typing(
     last_qa: "dict | None",
     q_count: int,
 ) -> dict:
-    """Запрашивает AI и показывает 'печатает...' весь время ожидания."""
+    """Requests AI and shows 'typing...' the entire time."""
     stop = asyncio.Event()
     typing_task = asyncio.create_task(_typing_loop(bot, chat_id, stop))
     try:
@@ -86,52 +83,72 @@ async def _ask_ai_with_typing(
     return result
 
 
+# ─── HR отчёт ───────────────────────────────────────────────────────────────────────────
+
 async def _send_hr_report(bot: Bot, session: AsyncSession, session_id: int, user_id: int) -> None:
-    """Отправляет итоговый отчёт в HR-чат."""
+    """Sends the final AI report to HR chat.
+
+    Reads saved data from the database so the message is always
+    consistent with what was persisted.
+    """
     interview = await db.get_interview_session(session, session_id)
     if not interview:
         return
 
     app = await db.get_latest_application(session, user_id)
     name = (app or {}).get("name", f"user#{user_id}")
+    position = (app or {}).get("position", "—")
+    q_count = interview.get("q_count", 0)
 
     header = (
-        f"🤖 AI-Отчёт по интервью \n"
-        f"{'─'*30}\n"
-        f"👤 {name} | user_id: {user_id} \n"
-        f"💼 {(app or {}).get('position', '—')}\n"
-        f"Вопросов задано: {interview['q_count']}\n"
-        f"{'─'*30}\n"
+        f"🤖 AI-Отчёт по интервью\n"
+        f"{'─' * 30}\n"
+        f"👤 {name} | user_id: {user_id}\n"
+        f"💼 {position}\n"
+        f"Вопросов задано: {q_count}\n"
+        f"{'─' * 30}\n"
     )
 
-    summary = interview.get("report_summary") or ""
+    summary = (interview.get("report_summary") or "").strip()
 
-    decision_raw = interview.get("report_decision")
     decision_block = ""
+    decision_raw = interview.get("report_decision")
     if decision_raw:
         try:
             dec = json.loads(decision_raw)
             total = dec.get("total_score", "—")
             decision_key = dec.get("decision", "")
-            _labels = {"invite": "✅ Пригласить", "review": "⚠️ Рассмотреть", "reject": "❌ Отклонить"}
-            conf = dec.get("confidence", None)
+            _labels = {
+                "invite": "✅ Пригласить",
+                "review": "⚠️ Рассмотреть",
+                "reject": "❌ Отклонить",
+            }
+            conf = dec.get("confidence")
             conf_str = f" (уверенность: {conf:.0%})" if isinstance(conf, float) else ""
             decision_block = (
-                f"\n 🏁 Решение: {_labels.get(decision_key, decision_key)} {conf_str}\n"
-                f"Балл: {total}/10 \n"
+                f"\n🏁 Решение: {_labels.get(decision_key, decision_key)}{conf_str}\n"
+                f"Балл: {total}/10\n"
             )
         except Exception:
             pass
 
-    full_text = header + summary + decision_block
+    # Если данных нет — сообщаем прямо без лишних заголовков
+    if not summary and not decision_block:
+        body = "⚠️ AI-отчёт не сформирован (агенты не вернули данных)."
+    else:
+        body = summary + decision_block
+
+    full_text = header + body
     if len(full_text) > 4000:
-        full_text = full_text[:3990] + "\n …(обрезано) "
+        full_text = full_text[:3990] + "\n…(обрезано)"
 
     try:
         await bot.send_message(chat_id=ADMIN_CHAT_ID, text=full_text, parse_mode="HTML")
     except Exception as e:
         logger.error("Ошибка отправки AI-отчёта в HR-чат: %s", e)
 
+
+# ─── запуск интервью ──────────────────────────────────────────────────────────────────
 
 async def start_interview(
     message: Message,
@@ -140,7 +157,6 @@ async def start_interview(
     form_data: dict,
     lang: str,
 ) -> None:
-    """Запускает интервью — вызывается из form.py после сохранения анкеты."""
     session_id = await db.create_interview_session(session, message.from_user.id)
     interview_state = make_empty_state()
 
@@ -157,8 +173,7 @@ async def start_interview(
 
     if step.get("done") or not step.get("question"):
         logger.warning(
-            "start_interview: AI вернул done/пусто на первом шаге — "
-            "используем fallback-вопрос (user_id=%d)",
+            "start_interview: AI вернул done/пусто — fallback (user_id=%d)",
             message.from_user.id,
         )
         question = _fallback_question(lang, [], [])
@@ -166,7 +181,6 @@ async def start_interview(
         question = step["question"]
 
     await db.update_interview_session(session, session_id, q_count=1)
-
     await state.set_state(Interview.answering)
     await state.update_data(
         interview_session_id=session_id,
@@ -179,12 +193,14 @@ async def start_interview(
     )
 
     intro = (
-        "🤖 Recruiter AI \n\nОтлично! Теперь я задам вам несколько вопросов, чтобы лучше вас узнать.\n\n"
+        "🤖 Recruiter AI\n\nОтлично! Теперь я задам вам несколько вопросов, чтобы лучше вас узнать.\n\n"
         if lang == "ru" else
-        "🤖 Recruiter AI \n\nJuda yaxshi! Endi men sizga bir necha savol beraman.\n\n"
+        "🤖 Recruiter AI\n\nJuda yaxshi! Endi men sizga bir necha savol beraman.\n\n"
     )
-    await message.answer(intro + f" {question} ", parse_mode="HTML", reply_markup=_skip_kb(lang))
+    await message.answer(intro + question, parse_mode="HTML", reply_markup=_skip_kb(lang))
 
+
+# ─── обработка ответов ───────────────────────────────────────────────────────────────────
 
 @router.message(Interview.answering)
 async def process_answer(message: Message, state: FSMContext, session: AsyncSession) -> None:
@@ -201,18 +217,14 @@ async def process_answer(message: Message, state: FSMContext, session: AsyncSess
     last_qa = {"q": current_q, "a": answer_text}
 
     step = await _ask_ai_with_typing(
-        message.bot,
-        message.chat.id,
-        form_data=form_data,
-        lang=lang,
+        message.bot, message.chat.id,
+        form_data=form_data, lang=lang,
         interview_state=interview_state,
-        last_qa=last_qa,
-        q_count=len(qa_log),
+        last_qa=last_qa, q_count=len(qa_log),
     )
 
     qa_log.append(last_qa)
     await db.append_qa(session, session_id, qa_log)
-
     interview_state = step.get("new_state", interview_state)
 
     question = (step.get("question") or "").strip()
@@ -221,15 +233,7 @@ async def process_answer(message: Message, state: FSMContext, session: AsyncSess
         await _finish_interview(message, state, session, session_id, form_data, lang, qa_log)
         return
 
-    if not question:
-        question = _fallback_question(lang, qa_log, asked_questions)
-    else:
-        normalized = question.casefold()
-        if normalized in asked_questions:
-            question = _fallback_question(lang, qa_log, asked_questions)
-        else:
-            asked_questions.append(normalized)
-
+    question = _resolve_question(question, lang, qa_log, asked_questions)
     await db.update_interview_session(session, session_id, q_count=len(qa_log) + 1)
     await state.update_data(
         interview_qa_log=qa_log,
@@ -237,7 +241,7 @@ async def process_answer(message: Message, state: FSMContext, session: AsyncSess
         interview_asked_questions=asked_questions,
         interview_state=interview_state,
     )
-    await message.answer(f"🤖 {question} ", parse_mode="HTML", reply_markup=_skip_kb(lang))
+    await message.answer(f"🤖 {question}", parse_mode="HTML", reply_markup=_skip_kb(lang))
 
 
 @router.callback_query(Interview.answering, F.data == "interview:skip")
@@ -256,18 +260,14 @@ async def skip_question(callback: CallbackQuery, state: FSMContext, session: Asy
     last_qa = {"q": current_q, "a": skip_text}
 
     step = await _ask_ai_with_typing(
-        callback.bot,
-        callback.message.chat.id,
-        form_data=form_data,
-        lang=lang,
+        callback.bot, callback.message.chat.id,
+        form_data=form_data, lang=lang,
         interview_state=interview_state,
-        last_qa=last_qa,
-        q_count=len(qa_log),
+        last_qa=last_qa, q_count=len(qa_log),
     )
 
     qa_log.append(last_qa)
     await db.append_qa(session, session_id, qa_log)
-
     interview_state = step.get("new_state", interview_state)
 
     question = (step.get("question") or "").strip()
@@ -276,15 +276,7 @@ async def skip_question(callback: CallbackQuery, state: FSMContext, session: Asy
         await _finish_interview(callback.message, state, session, session_id, form_data, lang, qa_log)
         return
 
-    if not question:
-        question = _fallback_question(lang, qa_log, asked_questions)
-    else:
-        normalized = question.casefold()
-        if normalized in asked_questions:
-            question = _fallback_question(lang, qa_log, asked_questions)
-        else:
-            asked_questions.append(normalized)
-
+    question = _resolve_question(question, lang, qa_log, asked_questions)
     await db.update_interview_session(session, session_id, q_count=len(qa_log) + 1)
     await state.update_data(
         interview_qa_log=qa_log,
@@ -292,7 +284,7 @@ async def skip_question(callback: CallbackQuery, state: FSMContext, session: Asy
         interview_asked_questions=asked_questions,
         interview_state=interview_state,
     )
-    await callback.message.answer(f"🤖 {question} ", parse_mode="HTML", reply_markup=_skip_kb(lang))
+    await callback.message.answer(f"🤖 {question}", parse_mode="HTML", reply_markup=_skip_kb(lang))
 
 
 @router.callback_query(Interview.answering, F.data == "interview:finish")
@@ -306,6 +298,8 @@ async def force_finish(callback: CallbackQuery, state: FSMContext, session: Asyn
     await _finish_interview(callback.message, state, session, session_id, form_data, lang, qa_log)
 
 
+# ─── завершение интервью ─────────────────────────────────────────────────────────────────
+
 async def _finish_interview(
     message: Message,
     state: FSMContext,
@@ -315,42 +309,43 @@ async def _finish_interview(
     lang: str,
     qa_log: "list[dict] | None" = None,
 ) -> None:
-    """Завершает интервью: запускает пайплайн, сохраняет, отправляет HR."""
+    """Finishes the interview: runs pipeline, saves reports, notifies HR."""
     if qa_log is None:
         qa_log = []
 
     await state.clear()
 
     thanks = (
-        "✅ Интервью завершено! \n\nСпасибо за ответы. HR-менеджер свяжется с вами в ближайшее время."
+        "✅ Интервью завершено!\n\n"
+        "Спасибо за ответы. HR-менеджер свяжется с вами в ближайшее время."
         if lang == "ru" else
-        "✅ Intervyu yakunlandi! \n\nJavoblaringiz uchun rahmat. HR-menejer tez orada siz bilan bog'lanadi."
+        "✅ Intervyu yakunlandi!\n\nJavoblaringiz uchun rahmat. HR-menejer tez orada siz bilan bog'lanadi."
     )
     await message.answer(thanks, parse_mode="HTML")
 
     user_id = message.from_user.id if message.from_user else message.chat.id
     bot: Bot = message.bot
 
+    # Guard: no answers at all — skip the expensive pipeline
     if not qa_log:
         logger.warning(
-            "_finish_interview: qa_log пуст — пайплайн пропущен (user_id=%d session_id=%d)",
+            "_finish_interview: qa_log empty — pipeline skipped (user_id=%d session_id=%d)",
             user_id, session_id,
         )
         await db.update_interview_session(session, session_id, status="done")
-        try:
+        with suppress(Exception):
             await bot.send_message(
                 chat_id=ADMIN_CHAT_ID,
                 text=(
                     f"⚠️ Интервью завершено без ответов.\n"
                     f"user_id={user_id} | session_id={session_id}\n"
-                    "AI не смог задать первый вопрос (проверьте токены OpenAI)."
+                    "Проверьте токены OpenAI."
                 ),
                 parse_mode="HTML",
             )
-        except Exception:
-            pass
         return
 
+    # Notify HR that processing has started
     try:
         app = await db.get_latest_application(session, user_id)
         name = (app or {}).get("name", f"user#{user_id}")
@@ -363,26 +358,76 @@ async def _finish_interview(
         pass
 
     logger.info(
-        "_finish_interview: запуск AI-пайплайна user_id=%d session_id=%d qa_count=%d",
+        "_finish_interview: running pipeline user_id=%d session_id=%d qa_count=%d",
         user_id, session_id, len(qa_log),
     )
 
-    reports = await run_all_agents(form_data, qa_log)
+    # Run the 5-agent pipeline; always persist results and send HR report
+    # even if agents return error dicts — never silently drop the report.
+    reports: dict = {}
+    pipeline_error: str | None = None
+    try:
+        reports = await run_all_agents(form_data, qa_log)
+    except Exception as exc:
+        pipeline_error = str(exc)
+        logger.error(
+            "_finish_interview: run_all_agents упал user_id=%d: %s",
+            user_id, exc, exc_info=True,
+        )
 
-    await db.save_interview_reports(
-        session,
-        session_id=session_id,
-        finished_at=_now(),
-        resume=reports.get("resume"),
-        communication=reports.get("communication"),
-        integrity=reports.get("integrity"),
-        job_match=reports.get("job_match"),
-        decision=reports.get("decision"),
-        total_score=reports.get("total_score"),
-        summary=reports.get("summary"),
-    )
+    # Persist whatever we got (even empty dicts on failure)
+    try:
+        await db.save_interview_reports(
+            session,
+            session_id=session_id,
+            finished_at=_now(),
+            resume=reports.get("resume"),
+            communication=reports.get("communication"),
+            integrity=reports.get("integrity"),
+            job_match=reports.get("job_match"),
+            decision=reports.get("decision"),
+            total_score=reports.get("total_score"),
+            summary=reports.get("summary"),
+        )
+    except Exception as exc:
+        logger.error(
+            "_finish_interview: save_interview_reports упал user_id=%d: %s",
+            user_id, exc, exc_info=True,
+        )
 
-    await _send_hr_report(bot, session, session_id, user_id)
+    # Always send HR the report (even if it shows an error message)
+    if pipeline_error:
+        # Pipeline crashed — send a minimal error card so HR isn't left in silence
+        with suppress(Exception):
+            await bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=(
+                    f"❌ AI-пайплайн упал для user_id={user_id}\n"
+                    f"Ошибка: {pipeline_error[:300]}\n"
+                    "Интервью сохранено, агенты можно запустить вручную."
+                ),
+                parse_mode="HTML",
+            )
+    else:
+        await _send_hr_report(bot, session, session_id, user_id)
+
+
+# ─── вспомогательные ─────────────────────────────────────────────────────────────────────
+
+def _resolve_question(
+    question: str,
+    lang: str,
+    qa_log: list[dict],
+    asked_questions: list[str],
+) -> str:
+    """Returns question as-is if unique, otherwise picks a fallback."""
+    if not question:
+        return _fallback_question(lang, qa_log, asked_questions)
+    normalized = question.casefold()
+    if normalized in asked_questions:
+        return _fallback_question(lang, qa_log, asked_questions)
+    asked_questions.append(normalized)
+    return question
 
 
 def _fallback_question(lang: str, qa_log: list[dict], asked_questions: list[str]) -> str:
@@ -403,7 +448,7 @@ def _fallback_question(lang: str, qa_log: list[dict], asked_questions: list[str]
         "Bu vakansiya uchun eng foydali ko'nikmangiz qaysi?",
     ]
     pool = pool_uz if lang == "uz" else pool_ru
-    for question in pool:
-        if question.casefold() not in asked_questions:
-            return question
+    for q in pool:
+        if q.casefold() not in asked_questions:
+            return q
     return pool[0]
