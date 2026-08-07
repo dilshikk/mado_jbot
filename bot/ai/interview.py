@@ -16,10 +16,10 @@ MAX_QUESTIONS = 10
 MIN_QUESTIONS = 5
 
 # Reasoning-модели (GPT-5, GPT-5-mini) тратят токены на внутренние
-# рассуждения ДО генерации ответа. При max_tokens=300 всё уходит
-# в reasoning и content остаётся пустым (finish_reason=length).
-# 1500 = ~500 reasoning + ~300 content + запас.
-_INTERVIEW_MAX_TOKENS = 1500
+# рассуждения ДО генерации ответа. При max_tokens=1500 все токены
+# уходят в reasoning и content остаётся пустым (finish_reason=length).
+# 4000 = ~2500-3000 reasoning + ~500-1000 content.
+_INTERVIEW_MAX_TOKENS = 4000
 
 
 def _extract_text(result: dict) -> str:
@@ -55,7 +55,6 @@ def _parse_step(raw: str) -> dict | None:
 
     # 3. Пробуем Python-literal_eval (одинарные кавычки, True/False)
     try:
-        # json.loads не понимает одинарные кавычки и Python-булы
         parsed = ast.literal_eval(candidate)
         if isinstance(parsed, dict) and "done" in parsed:
             return parsed
