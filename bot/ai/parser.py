@@ -1,8 +1,8 @@
 # bot/ai/parser.py
-"""Утилиты для разбора ответов Cloudflare Workers AI.
+"""Утилиты для разбора ответов OpenAI API.
 
 Единая точка правды для:
-  - извлечения текста из структуры ответа CF API (extract_text)
+  - извлечения текста из структуры ответа (extract_text)
   - извлечения JSON/Python-dict из текста модели (extract_json)
 
 Не дублируйте эту логику в других модулях — баг-фиксы должны
@@ -19,12 +19,12 @@ logger = logging.getLogger(__name__)
 
 
 def extract_text(result: dict | None) -> str | None:
-    """Извлекает текст ответа из структуры CF API.
+    """Извлекает текст ответа из структуры API.
 
-    CF может вернуть разные форматы:
-      {"result": {"response": "текст"}}
-      {"result": {"response": {"content": "текст"}}}
-      {"result": {"response": [{"content": "текст"}]}}   # некоторые модели
+    Поддерживаемые форматы:
+      {"result": {"response": "текст"}}           — наш wrapper для OpenAI
+      {"result": {"response": {"content": "..."}}}
+      {"result": {"response": [{"content": "..."}]}}
     """
     if not result:
         return None
@@ -32,15 +32,15 @@ def extract_text(result: dict | None) -> str | None:
     inner = (result.get("result") or {}).get("response")
 
     if inner is None:
-        logger.debug("CF ответ не содержит response: %r", result)
+        logger.debug("Ответ не содержит response: %r", result)
         return None
 
-    # Строка — самый частый случай
+    # Строка — стандартный случай (наш OpenAI wrapper всегда возвращает str)
     if isinstance(inner, str):
         text = inner.strip()
         return text if text else None
 
-    # Dict — некоторые модели оборачивают в объект
+    # Dict
     if isinstance(inner, dict):
         text = (
             inner.get("content")
@@ -50,7 +50,7 @@ def extract_text(result: dict | None) -> str | None:
         )
         return str(text).strip() or None
 
-    # List — chat-completion формат
+    # List
     if isinstance(inner, list) and inner:
         first = inner[0]
         if isinstance(first, dict):
@@ -61,20 +61,20 @@ def extract_text(result: dict | None) -> str | None:
             )
             return str(text).strip() or None
 
-    logger.warning("Неизвестный формат CF response: %r", type(inner))
+    logger.warning("Неизвестный формат response: %r", type(inner))
     return str(inner).strip() or None
 
 
 def extract_json(text: str) -> dict[str, Any]:
     """Извлекает JSON-объект из текста модели с тремя уровнями fallback:
     1. json.loads на вырезанный блок { ... }
-    2. regex-чистка одиночных кавычек (CF иногда возвращает Python-dict)
+    2. regex-чистка одиночных кавычек
     3. ast.literal_eval
 
     При полной неудаче возвращает {"error": ..., "raw": ...} — всегда dict,
     никогда не бросает исключений.
     """
-    # Вырезаем первый блок { ... }
+    # Ищем самый внешний блок { ... }
     start = text.find("{")
     end   = text.rfind("}") + 1
     if start == -1 or end <= start:
@@ -90,9 +90,9 @@ def extract_json(text: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         pass
 
-    # Попытка 2: заменяем одиночные кавычки → двойные
+    # Попытка 2: одиночные кавычки → двойные
     try:
-        fixed = re.sub(r"(?<![\\])'", '"', chunk)
+        fixed = re.sub(r"(?<![\\\"])\'", '"', chunk)
         parsed = json.loads(fixed)
         if isinstance(parsed, dict):
             return parsed
