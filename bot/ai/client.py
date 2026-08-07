@@ -18,6 +18,36 @@ _RETRYABLE_STATUSES = {408, 429, 500, 502, 503, 504}
 _MAX_ATTEMPTS = 3
 _BACKOFF_BASE = 1.0
 
+# Модульный пул соединений — создаётся один раз и переиспользуется
+# для всех запросов (включая retry-попытки внутри cf_chat).
+# ConnectionPoolConfig: limit=20 — ограничиваем пул, так как OpenAI API единственный хост.
+_connector: aiohttp.TCPConnector | None = None
+_session: aiohttp.ClientSession | None = None
+
+
+def _get_session() -> aiohttp.ClientSession:
+    """Returns the shared aiohttp session, creating it on first call."""
+    global _connector, _session
+    if _session is None or _session.closed:
+        _connector = aiohttp.TCPConnector(limit=20, ttl_dns_cache=300)
+        _session = aiohttp.ClientSession(
+            connector=_connector,
+            timeout=_TIMEOUT,
+        )
+    return _session
+
+
+async def close_session() -> None:
+    """Gracefully closes the shared session on bot shutdown."""
+    global _session, _connector
+    if _session and not _session.closed:
+        await _session.close()
+        _session = None
+    if _connector and not _connector.closed:
+        await _connector.close()
+        _connector = None
+
+
 async def cf_chat(
     model: str,
     messages: list[dict],
@@ -26,8 +56,8 @@ async def cf_chat(
 ) -> dict | None:
     """Отправляет chat-запрос в OpenAI API с ретраями.
 
-    Возвращает структуру совместимую с ранее используемым Cloudflare API:
-    {"result": {"response": " "}}
+    Возвращает структуру совместимую с ранее использовавшимся Cloudflare API:
+    {"result": {"response": "..."}}
     или None при ошибке.
 
     Никогда не бросает исключений.
@@ -35,6 +65,9 @@ async def cf_chat(
     Примечание: GPT-5 и GPT-5-mini — reasoning-модели. Они тратят
     токены на внутренние рассуждения (reasoning_tokens) до генерации
     ответа. max_completion_tokens должен включать оба типа токенов.
+
+    TCP-соединение переиспользуется через модульный _session,
+    включая retry-попытки.
     """
     if not settings.ai_available:
         return None
@@ -52,40 +85,39 @@ async def cf_chat(
     if response_format:
         payload["response_format"] = response_format
 
+    http = _get_session()
+
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
-            async with aiohttp.ClientSession(timeout=_TIMEOUT) as http:
-                async with http.post(_API_URL, json=payload, headers=headers) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        choice = (data.get("choices") or [{}])[0]
-                        finish = choice.get("finish_reason", "")
-                        text = choice.get("message", {}).get("content") or ""
+            async with http.post(_API_URL, json=payload, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    choice = (data.get("choices") or [{}])[0]
+                    finish = choice.get("finish_reason", "")
+                    text = choice.get("message", {}).get("content") or ""
 
-                        # Если модель завершила по причине рассуждения — контент
-                        # может быть в reasoning поле (o-series compatible)
-                        if not text:
-                            text = choice.get("message", {}).get("reasoning") or ""
+                    if not text:
+                        text = choice.get("message", {}).get("reasoning") or ""
 
-                        logger.debug(
-                            "OpenAI OK | model=%s finish=%s len=%d",
-                            model, finish, len(text),
-                        )
-                        if not text:
-                            logger.warning(
-                                "OpenAI вернул пустой content | finish=%s | raw=%s",
-                                finish,
-                                str(data)[:500],
-                            )
-                        return {"result": {"response": text}}
-
-                    body = await resp.text()
-                    logger.warning(
-                        "OpenAI HTTP %d (попытка %d/%d): %s",
-                        resp.status, attempt, _MAX_ATTEMPTS, body[:400],
+                    logger.debug(
+                        "OpenAI OK | model=%s finish=%s len=%d",
+                        model, finish, len(text),
                     )
-                    if resp.status not in _RETRYABLE_STATUSES:
-                        return None
+                    if not text:
+                        logger.warning(
+                            "OpenAI вернул пустой content | finish=%s | raw=%s",
+                            finish,
+                            str(data)[:500],
+                        )
+                    return {"result": {"response": text}}
+
+                body = await resp.text()
+                logger.warning(
+                    "OpenAI HTTP %d (попытка %d/%d): %s",
+                    resp.status, attempt, _MAX_ATTEMPTS, body[:400],
+                )
+                if resp.status not in _RETRYABLE_STATUSES:
+                    return None
 
         except Exception as e:
             logger.warning(
