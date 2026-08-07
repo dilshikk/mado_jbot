@@ -2,18 +2,13 @@
 """5-уровневый AI-пайплайн оценки кандидата.
 
 Уровень 1 — Interview AI (уже отработал до вызова агентов)
-Уровень 2 — Resume Extractor AI (1 запрос, JSON-структура)
-Уровень 3 — Communication AI (параллельно)
-             Integrity AI (параллельно)
-Уровень 4 — Job Match AI (1 запрос, видит уровни 2+3)
-Уровень 5 — Hiring Decision AI (1 запрос, видит всё)
+Уровень 2 — Resume Extractor AI (1 запрос, json_object)
+Уровень 3 — Communication AI (параллельно, json_schema strict)
+             Integrity AI     (параллельно, json_object)
+Уровень 4 — Job Match AI (json_schema strict)
+Уровень 5 — Hiring Decision AI (json_schema strict)
 
-Итого: 5 запросов вместо 9. Все ответы — строгий JSON.
-Итоговый балл считается в Python (мотивация 30%, опыт 30%, коммуникация 20%, риски 20%).
-
-Примечание по токенам: GPT-5 и GPT-5-mini — reasoning-модели.
-Они тратят токены на внутренние рассуждения (reasoning_tokens) до
-генерации контента. max_completion_tokens = reasoning + content.
+Итого: 5 запросов вместо 9. Итоговый балл считается в Python.
 Typical reasoning overhead: 500–1500 токенов на запрос.
 """
 
@@ -40,10 +35,14 @@ from bot.ai.prompts import (
     JOB_MATCH_SYSTEM,
     RESUME_SYSTEM,
 )
+from bot.ai.schemas import (
+    COMMUNICATION_FORMAT,
+    HIRING_DECISION_FORMAT,
+    JOB_MATCH_FORMAT,
+    JSON_OBJECT_FORMAT,
+)
 
 logger = logging.getLogger(__name__)
-
-_JSON_FORMAT = {"type": "json_object"}
 
 # Должности, для которых грамотность письменной речи — важный критерий
 _LANGUAGE_SENSITIVE_POSITIONS = {
@@ -51,12 +50,12 @@ _LANGUAGE_SENSITIVE_POSITIONS = {
     "administrator", "manager", "operator",
 }
 
-# Веса для итогового балла (должны давать 1.0 в сумме)
+# Веса для итогового балла
 _WEIGHTS = {
-    "motivation": 0.30,
-    "experience": 0.30,
+    "motivation":    0.30,
+    "experience":    0.30,
     "communication": 0.20,
-    "integrity": 0.20,
+    "integrity":     0.20,
 }
 
 # ---------------------------------------------------------------------------
@@ -64,7 +63,6 @@ _WEIGHTS = {
 # ---------------------------------------------------------------------------
 
 def _base_context(form_data: dict, qa_log: list[dict]) -> str:
-    """Формирует единый текстовый контекст для всех агентов."""
     lines = ["=== АНКЕТА КАНДИДАТА ==="]
     for key, value in form_data.items():
         lines.append(f"{key}: {value}")
@@ -77,33 +75,41 @@ def _base_context(form_data: dict, qa_log: list[dict]) -> str:
 
     return "\n".join(lines)
 
+
 async def _run_json_agent(
     system_prompt: str,
     user_content: str,
     max_tokens: int = 2000,
     model: str = RESUME_MODEL,
+    text_format: dict | None = None,
 ) -> dict[str, Any]:
-    """Запрашивает агента, всегда возвращает dict (никогда не кидает исключений)."""
+    """Запрашивает агента, всегда возвращает dict (никогда не кидает исключений).
+
+    Args:
+        text_format: если None — используется json_object;
+                     иначе — передаётся напрямую в cf_chat.
+    """
+    fmt = text_format or JSON_OBJECT_FORMAT
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
     try:
         result = await cf_chat(
-            model, messages,
+            model=model,
+            messages=messages,
             max_tokens=max_tokens,
-            response_format=_JSON_FORMAT,
+            text_format=fmt,
         )
         if not result:
             return {"error": "no_response"}
 
         text = extract_text(result)
-
         if not text:
-            logger.warning("_run_json_agent: extract_text вернул None, result=%r", result)
+            logger.warning("_run_json_agent: пустой ответ, result=%r", result)
             return {"error": "no_text"}
 
-        # Если response уже dict — возвращаем напрямую
+        # Если Structured Outputs вернул dict напрямую
         inner = (result.get("result") or {}).get("response")
         if isinstance(inner, dict):
             return inner
@@ -114,8 +120,7 @@ async def _run_json_agent(
 
         logger.warning(
             "_run_json_agent: не удалось распарсить JSON | text=%s | ошибка=%s",
-            text[:200],
-            parsed.get("error"),
+            text[:200], parsed.get("error"),
         )
         return parsed
 
@@ -123,33 +128,43 @@ async def _run_json_agent(
         logger.error("_run_json_agent упал: %s", exc, exc_info=True)
         return {"error": "exception", "detail": str(exc)}
 
+
 def _safe_score(raw: object) -> float:
-    """Приводит произвольное значение к float в диапазоне [0, 10]."""
     try:
         value = float(raw)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return 0.0
     return max(0.0, min(10.0, value))
 
+
 # ---------------------------------------------------------------------------
 # Основная точка входа
 # ---------------------------------------------------------------------------
 
 async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
-    """Запускает 5-уровневый пайплайн оценки кандидата."""
+    """5-уровневый пайплайн оценки кандидата."""
     context = _base_context(form_data, qa_log)
 
-    # ── Уровень 2: Resume Extractor ───────────────────────────────────────
-    # max_tokens: ~1500 reasoning + ~1500 content = 3000
+    # ── Уровень 2: Resume Extractor ────────────────────────────────────────────────
+    # json_object: динамические ключи в jobs[] не позволяют strict schema
     resume_data = await _run_json_agent(
-        RESUME_SYSTEM, context, max_tokens=3000, model=RESUME_MODEL,
+        RESUME_SYSTEM, context,
+        max_tokens=3000, model=RESUME_MODEL,
+        text_format=JSON_OBJECT_FORMAT,
     )
 
-    # ── Уровень 3: Communication + Integrity параллельно ─────────────────
-    # max_tokens: ~1500 reasoning + ~1000 content = 2500
+    # ── Уровень 3: Communication (строгая schema) + Integrity (json_object) ───────
     comm_result, integrity_result = await asyncio.gather(
-        _run_json_agent(COMMUNICATION_SYSTEM, context, max_tokens=2500, model=COMMUNICATION_MODEL),
-        _run_json_agent(INTEGRITY_SYSTEM, context, max_tokens=2500, model=INTEGRITY_MODEL),
+        _run_json_agent(
+            COMMUNICATION_SYSTEM, context,
+            max_tokens=2500, model=COMMUNICATION_MODEL,
+            text_format=COMMUNICATION_FORMAT,      # json_schema strict
+        ),
+        _run_json_agent(
+            INTEGRITY_SYSTEM, context,
+            max_tokens=2500, model=INTEGRITY_MODEL,
+            text_format=JSON_OBJECT_FORMAT,        # динам. массивы contradictions/flags
+        ),
         return_exceptions=True,
     )
 
@@ -162,7 +177,7 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
     comm_data = _safe_dict(comm_result)
     integrity_data = _safe_dict(integrity_result)
 
-    # ── Уровень 4: Job Match ──────────────────────────────────────────────
+    # ── Уровень 4: Job Match (строгая schema) ─────────────────────────────────────
     level3_context = (
         context
         + "\n\n=== RESUME EXTRACTOR ===\n"
@@ -172,23 +187,25 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
         + "\n\n=== INTEGRITY AI ===\n"
         + json.dumps(integrity_data, ensure_ascii=False)
     )
-    # max_tokens: ~1500 reasoning + ~1000 content = 2500
     job_match_data = await _run_json_agent(
-        JOB_MATCH_SYSTEM, level3_context, max_tokens=2500, model=JOB_MATCH_MODEL,
+        JOB_MATCH_SYSTEM, level3_context,
+        max_tokens=2500, model=JOB_MATCH_MODEL,
+        text_format=JOB_MATCH_FORMAT,              # json_schema strict
     )
 
-    # ── Уровень 5: Hiring Decision ────────────────────────────────────────
+    # ── Уровень 5: Hiring Decision (строгая schema) ───────────────────────────
     level4_context = (
         level3_context
         + "\n\n=== JOB MATCH AI ===\n"
         + json.dumps(job_match_data, ensure_ascii=False)
     )
-    # max_tokens: ~1500 reasoning + ~1500 content = 3000
     decision_data = await _run_json_agent(
-        HIRING_DECISION_SYSTEM, level4_context, max_tokens=3000, model=HIRING_DECISION_MODEL,
+        HIRING_DECISION_SYSTEM, level4_context,
+        max_tokens=3000, model=HIRING_DECISION_MODEL,
+        text_format=HIRING_DECISION_FORMAT,        # json_schema strict
     )
 
-    # Итоговый балл считается в Python по весам
+    # Итоговый балл — веса считает Python
     scores = decision_data.get("scores", {})
     total = 0.0
     for key, weight in _WEIGHTS.items():
@@ -201,14 +218,15 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
     summary = _build_summary_text(resume_data, decision_data, job_match_data, integrity_data)
 
     return {
-        "resume": resume_data,
+        "resume":        resume_data,
         "communication": comm_data,
-        "integrity": integrity_data,
-        "job_match": job_match_data,
-        "decision": decision_data,
-        "total_score": total,
-        "summary": summary,
+        "integrity":     integrity_data,
+        "job_match":     job_match_data,
+        "decision":      decision_data,
+        "total_score":   total,
+        "summary":       summary,
     }
+
 
 # ---------------------------------------------------------------------------
 # Форматирование текстового отчёта (Python, без AI)
@@ -220,15 +238,16 @@ _DECISION_LABELS = {
     "reject": "❌ Отклонить",
 }
 _PRIORITY_LABELS = {
-    "high": "🔴 Высокий",
+    "high":   "🔴 Высокий",
     "medium": "🟡 Средний",
-    "low": "🟢 Низкий",
+    "low":    "🟢 Низкий",
 }
 _RISK_LABELS = {
-    "low": "🟢 Низкий",
+    "low":    "🟢 Низкий",
     "medium": "🟡 Средний",
-    "high": "🔴 Высокий",
+    "high":   "🔴 Высокий",
 }
+
 
 def _build_summary_text(
     resume: dict,
@@ -236,7 +255,6 @@ def _build_summary_text(
     job_match: dict,
     integrity: dict,
 ) -> str:
-    """Строит читаемый текст отчёта для HR из JSON-ответов агентов."""
     lines: list[str] = []
 
     cand = resume.get("candidate", {})
