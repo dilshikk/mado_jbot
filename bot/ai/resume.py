@@ -2,6 +2,7 @@
 """Генерация AI-скрининга анкеты кандидата."""
 
 from datetime import datetime
+from typing import Any
 
 from bot.ai.client import cf_chat
 from bot.ai.models import SCREENING_MODEL
@@ -35,7 +36,13 @@ def _build_prompt(data: dict) -> str:
     return "Анкета кандидата:\n" + "\n".join(lines)
 
 
-async def screen_application(data: dict) -> str | None:
+async def screen_application(
+    bot: Any,
+    session: Any,
+    app_id: Any,
+    data: dict,
+    user: Any,
+) -> str | None:
     """Возвращает текст AI-скрининга или None, если AI недоступен/ошибка.
 
     Никогда не бросает исключений — скрининг не должен ломать приём анкет.
