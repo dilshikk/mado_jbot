@@ -1,9 +1,15 @@
 # bot/ai/resume.py
-"""AI-скрининг анкеты + отправка HR-карточки в чат."""
+"""AI-скрининг анкеты + отправка HR-карточки в чат.
+
+Порядок отправки:
+  1. AI-скрининг запускается сразу.
+  2. HR-карточка + AI-результат отправляются одним сообщением.
+  3. Видео-визитка (если есть) идёт следующим сообщением.
+"""
 
 import logging
-from datetime import datetime
 from contextlib import suppress
+from datetime import datetime
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
@@ -20,14 +26,10 @@ from bot.utils.formatters import build_hr_resume_text
 
 logger = logging.getLogger(__name__)
 
-# Reasoning-модели (GPT-5, GPT-5-mini) тратят токены на внутренние
-# рассуждения ДО генерации ответа. При max_tokens=300 всё уходит
-# в reasoning и content остаётся пустым (finish_reason=length).
+# Reasoning-модели (GPT-5, GPT-5-mini) тратят токены на рассуждения ДО генерации ответа.
 # 2000 = ~1500 reasoning + ~500 content.
 _SCREENING_MAX_TOKENS = 2000
 
-
-# ─── Вспомогательные функции ──────────────────────────────────────────────────
 
 def _calc_age(birthday: str | None) -> int | None:
     if not birthday:
@@ -61,7 +63,7 @@ async def _run_ai_screening(data: dict) -> str | None:
         model=SCREENING_MODEL,
         messages=[
             {"role": "system", "content": SCREENING_SYSTEM},
-            {"role": "user", "content": _build_prompt(data)},
+            {"role": "user",   "content": _build_prompt(data)},
         ],
         max_tokens=_SCREENING_MAX_TOKENS,
     )
@@ -70,8 +72,6 @@ async def _run_ai_screening(data: dict) -> str | None:
     return extract_text(result)
 
 
-# ─── Публичная функция (вызывается из form.py) ────────────────────────────────
-
 async def screen_application(
     bot: Bot,
     session: AsyncSession,
@@ -79,7 +79,7 @@ async def screen_application(
     data: dict,
     user,
 ) -> None:
-    """Отправляет HR-карточку в чат, видео-визитку и AI-скрининг (best-effort).
+    """Отправляет HR-карточку + AI-скрининг одним сообщением, видео отдельно.
 
     Никогда не бросает исключений — не должна ломать приём анкеты.
     """
@@ -93,11 +93,35 @@ async def screen_application(
         candidate_id=user.id,
     )
 
-    # Отправляем основную карточку
+    # Сначала запрашиваем AI (best-effort)
+    ai_text: str | None = None
+    if settings.ai_available:
+        try:
+            ai_text = await _run_ai_screening(data)
+        except Exception as exc:
+            logger.error(
+                "screen_application: AI-скрининг упал user=%d: %s",
+                user.id, exc,
+            )
+
+    # Собираем одно сообщение: карточка + AI-скрининг
+    if ai_text:
+        full_text = (
+            f"{resume_text}\n\n"
+            f"{'─' * 30}\n"
+            f"🤖 <b>AI-скрининг:</b>\n{ai_text}"
+        )
+    else:
+        full_text = resume_text
+
+    # Сообщение Telegram ограничено 4096 символами
+    if len(full_text) > 4096:
+        full_text = full_text[:4090] + "\n…"
+
     try:
         await bot.send_message(
             chat_id=ADMIN_CHAT_ID,
-            text=resume_text,
+            text=full_text,
             reply_markup=hr_keyboard,
             parse_mode="HTML",
         )
@@ -107,7 +131,7 @@ async def screen_application(
             user.id, exc,
         )
 
-    # Отправляем видео-визитку, если есть
+    # Видео-визитка отдельным сообщением
     video_file_id = data.get("video_file_id")
     is_video_note = data.get("is_video_note", False)
     if video_file_id:
@@ -123,28 +147,10 @@ async def screen_application(
                     video=video_file_id,
                     caption=f"🎥 Видео-визитка | user_id={user.id}",
                 )
-            await db.save_hr_video_msg_id(session, user.id, msg.message_id)
+            with suppress(Exception):
+                await db.save_hr_video_msg_id(session, user.id, msg.message_id)
         except Exception as exc:
             logger.error(
                 "screen_application: ошибка отправки видео user=%d: %s",
                 user.id, exc,
             )
-
-    # AI-скрининг (best-effort — не ломаем приём анкеты)
-    if not settings.ai_available:
-        return
-
-    try:
-        ai_text = await _run_ai_screening(data)
-        if ai_text:
-            with suppress(TelegramAPIError):
-                await bot.send_message(
-                    chat_id=ADMIN_CHAT_ID,
-                    text=f"🤖 <b>AI-скрининг резюме:</b>\n\n{ai_text}",
-                    parse_mode="HTML",
-                )
-    except Exception as exc:
-        logger.error(
-            "screen_application: AI-скрининг упал user=%d: %s",
-            user.id, exc,
-        )
