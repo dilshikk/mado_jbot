@@ -4,7 +4,7 @@
 - Языки владения (Inline мультиселект)
 - Готовность к работе (Inline CallbackQuery)
 - Опыт работы — ветвление Да/Нет (Inline) + 4 под-шага (текст)
-- Зарплатные ожидания (текст)
+- Зарплатные ожидания (текст + кнопка Пропустить)
 - График работы (Inline)
 - Вечерние смены (Inline)
 - Выходные и праздники (Inline)
@@ -239,7 +239,8 @@ async def handle_experience_yn(callback: CallbackQuery, state: FSMContext) -> No
         await state.set_state(Form.waiting_exp_company)
         await callback.message.answer(
             _t(lang, "ask_exp_company"),
-            reply_markup=kb.get_cancel_keyboard(lang),
+            # Кнопка «Пропустить» нужна, чтобы не застрять на шаге
+            reply_markup=kb.get_skip_cancel_keyboard(lang),
         )
 
 
@@ -249,12 +250,16 @@ async def handle_experience_yn(callback: CallbackQuery, state: FSMContext) -> No
 async def handle_exp_company(message: Message, state: FSMContext) -> None:
     data  = await state.get_data()
     lang  = _lang(data)
-    value = (message.text or "").strip() or None
+    text  = (message.text or "").strip()
+    value = None if text == _skip_text(lang) else text or None
     await state.update_data(exp_company=value)
     if recap := _recap(lang, "exp_company", value):
         await message.answer(recap, parse_mode="HTML")
     await state.set_state(Form.waiting_exp_position)
-    await message.answer(_t(lang, "ask_exp_position"), reply_markup=kb.get_cancel_keyboard(lang))
+    await message.answer(
+        _t(lang, "ask_exp_position"),
+        reply_markup=kb.get_skip_cancel_keyboard(lang),
+    )
 
 @router.message(Form.waiting_exp_position)
 async def handle_exp_position(message: Message, state: FSMContext) -> None:
@@ -266,7 +271,10 @@ async def handle_exp_position(message: Message, state: FSMContext) -> None:
     if recap := _recap(lang, "exp_position", value):
         await message.answer(recap, parse_mode="HTML")
     await state.set_state(Form.waiting_exp_duration)
-    await message.answer(_t(lang, "ask_exp_duration"), reply_markup=kb.get_cancel_keyboard(lang))
+    await message.answer(
+        _t(lang, "ask_exp_duration"),
+        reply_markup=kb.get_skip_cancel_keyboard(lang),
+    )
 
 @router.message(Form.waiting_exp_duration)
 async def handle_exp_duration(message: Message, state: FSMContext) -> None:
@@ -278,7 +286,10 @@ async def handle_exp_duration(message: Message, state: FSMContext) -> None:
     if recap := _recap(lang, "exp_duration", value):
         await message.answer(recap, parse_mode="HTML")
     await state.set_state(Form.waiting_exp_duties)
-    await message.answer(_t(lang, "ask_exp_duties"), reply_markup=kb.get_cancel_keyboard(lang))
+    await message.answer(
+        _t(lang, "ask_exp_duties"),
+        reply_markup=kb.get_skip_cancel_keyboard(lang),
+    )
 
 @router.message(Form.waiting_exp_duties)
 async def handle_exp_duties(message: Message, state: FSMContext) -> None:
@@ -292,13 +303,14 @@ async def handle_exp_duties(message: Message, state: FSMContext) -> None:
     await _ask_salary(message, state, lang)
 
 
-# ─── 6. Зарплатные ожидания (текст) ──────────────────────────────────────────
+# ─── 6. Зарплатные ожидания (текст + кнопка Пропустить) ──────────────────────
 
 async def _ask_salary(message: Message, state: FSMContext, lang: str) -> None:
     await state.set_state(Form.waiting_salary)
     await message.answer(
         _t(lang, "ask_salary"),
-        reply_markup=kb.get_cancel_keyboard(lang),
+        # Используем skip+cancel клавиатуру — кнопка «Пропустить» соответствует тексту подсказки
+        reply_markup=kb.get_skip_cancel_keyboard(lang),
         parse_mode="HTML",
     )
 
