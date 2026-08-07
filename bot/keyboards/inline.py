@@ -1,5 +1,7 @@
 # bot/keyboards/inline.py
 
+from datetime import datetime, timedelta
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.core.config import SHEET_URL
@@ -113,6 +115,44 @@ def get_hr_hold_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="▶️ Вернуть в работу", callback_data=f"hr_accept:{candidate_id}"),
         InlineKeyboardButton(text="❌ Отклонить",         callback_data=f"hr_reject:{candidate_id}"),
     ]])
+
+def get_interview_schedule_keyboard(candidate_id: int) -> InlineKeyboardMarkup:
+    """Быстрый выбор даты/времени собеседования для HR."""
+    today = datetime.now()
+    slots: list[tuple[str, str]] = []
+
+    # Генерируем слоты: сегодня и завтра × несколько временных промежутков
+    for day_offset, day_label in [(0, "Сегодня"), (1, "Завтра")]:
+        day = today + timedelta(days=day_offset)
+        date_str = day.strftime("%d.%m")
+        for hour in [10, 12, 14, 16]:
+            time_str = f"{hour:02d}:00"
+            label = f"{day_label} {time_str}"
+            value = f"{date_str} в {time_str}"
+            slots.append((label, value))
+
+    rows: list[list[InlineKeyboardButton]] = []
+    pair: list[InlineKeyboardButton] = []
+    for label, value in slots:
+        pair.append(InlineKeyboardButton(
+            text=label,
+            callback_data=f"hr_schedule:{candidate_id}:{value}",
+        ))
+        if len(pair) == 2:
+            rows.append(pair)
+            pair = []
+    if pair:
+        rows.append(pair)
+
+    rows.append([InlineKeyboardButton(
+        text="✏️ Ввести вручную",
+        callback_data=f"hr_schedule_manual:{candidate_id}",
+    )])
+    rows.append([InlineKeyboardButton(
+        text="❌ Отмена",
+        callback_data=f"hr_schedule_cancel:{candidate_id}",
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 # ─── Admin: Главное меню ──────────────────────────────────────────────────────
