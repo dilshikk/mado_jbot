@@ -11,6 +11,7 @@ load_dotenv()
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramNetworkError
 
+from bot.ai.client import close_session
 from bot.core.config import ADMIN_CHAT_ID, settings
 from bot.core.loader import create_bot, create_dispatcher, create_storage
 from bot.db.base import engine, init_db
@@ -71,7 +72,6 @@ async def main() -> None:
             await dp.start_polling(
                 bot,
                 allowed_updates=dp.resolve_used_update_types(),
-                # Таймаут long-poll запроса
                 polling_timeout=30,
             )
             break  # нормальный выход (SIGINT/SIGTERM)
@@ -80,13 +80,11 @@ async def main() -> None:
                 "Сетевая ошибка polling: %s. Повтор через %d сек...", e, retry_delay
             )
             await asyncio.sleep(retry_delay)
-            # Увеличиваем задержку после ошибки (экспоненциальный backoff, макс 60 сек)
             retry_delay = min(retry_delay * 2, 60)
         except Exception as e:
             logger.exception("Критическая ошибка polling: %s", e)
             break
         else:
-            # Успешное завершение polling — сбрасываем задержку
             retry_delay = 5
 
     # Graceful shutdown
@@ -98,6 +96,8 @@ async def main() -> None:
         await storage.close()
     with suppress(Exception):
         await engine.dispose()
+    with suppress(Exception):
+        await close_session()  # закрываем общий aiohttp-пул
     with suppress(Exception):
         await bot.session.close()
     logger.info("Бот корректно остановлен.")
