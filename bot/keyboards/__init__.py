@@ -39,6 +39,7 @@ from bot.keyboards.inline import (
     # HR и форма
     get_hr_action_keyboard,
     get_hr_hold_keyboard,
+    get_interview_schedule_keyboard,
     get_metro_lines_keyboard,
     get_metro_stations_keyboard,
     get_post_interview_keyboard,
@@ -97,6 +98,7 @@ __all__ = [
     # Inline (HR + форма)
     "get_hr_action_keyboard",
     "get_hr_hold_keyboard",
+    "get_interview_schedule_keyboard",
     "get_metro_lines_keyboard",
     "get_metro_stations_keyboard",
     "get_post_interview_keyboard",
