@@ -2,12 +2,17 @@
 """Генерация AI-скрининга анкеты кандидата."""
 
 from datetime import datetime
-from typing import Any
 
 from bot.ai.client import cf_chat
 from bot.ai.models import SCREENING_MODEL
 from bot.ai.parser import extract_text
 from bot.ai.prompts import SCREENING_SYSTEM
+
+# Reasoning-модели (GPT-5, GPT-5-mini) тратят токены на внутренние
+# рассуждения ДО генерации ответа. При max_tokens=300 всё уходит
+# в reasoning и content остаётся пустым (finish_reason=length).
+# 2000 = ~1500 reasoning + ~500 content.
+_SCREENING_MAX_TOKENS = 2000
 
 
 def _calc_age(birthday: str | None) -> int | None:
@@ -36,13 +41,7 @@ def _build_prompt(data: dict) -> str:
     return "Анкета кандидата:\n" + "\n".join(lines)
 
 
-async def screen_application(
-    bot: Any,
-    session: Any,
-    app_id: Any,
-    data: dict,
-    user: Any,
-) -> str | None:
+async def screen_application(data: dict) -> str | None:
     """Возвращает текст AI-скрининга или None, если AI недоступен/ошибка.
 
     Никогда не бросает исключений — скрининг не должен ломать приём анкет.
@@ -51,9 +50,9 @@ async def screen_application(
         model=SCREENING_MODEL,
         messages=[
             {"role": "system", "content": SCREENING_SYSTEM},
-            {"role": "user",   "content": _build_prompt(data)},
+            {"role": "user", "content": _build_prompt(data)},
         ],
-        max_tokens=300,
+        max_tokens=_SCREENING_MAX_TOKENS,
     )
     if result is None:
         return None
