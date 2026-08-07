@@ -38,12 +38,11 @@ async def cf_chat(
         "Authorization": f"Bearer {settings.openai_api_key}",
         "Content-Type": "application/json",
     }
+    # gpt-5 / gpt-5-mini: не поддерживают max_tokens и temperature != 1
     payload = {
         "model": model,
         "messages": messages,
-        # gpt-5 / gpt-5-mini используют max_completion_tokens вместо max_tokens
         "max_completion_tokens": max_tokens,
-        "temperature": 0.7,
     }
 
     for attempt in range(1, _MAX_ATTEMPTS + 1):
