@@ -12,7 +12,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, C
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.ai.agents import run_all_agents
-from bot.ai.interview import get_next_step
+from bot.ai.interview import get_next_step, make_empty_state
 from bot.core.config import ADMIN_CHAT_ID
 from bot.db import requests as db
 from bot.filters.common import IsPrivateChat
@@ -60,10 +60,8 @@ async def _send_hr_report(bot, session: AsyncSession, session_id: int, user_id: 
         f"{'─'*30}\n"
     )
 
-    # Основной блок — текстовый summary из Python-рендера
     summary = interview.get("report_summary") or ""
 
-    # Hiring Decision — читаем из JSON
     decision_raw = interview.get("report_decision")
     decision_block = ""
     if decision_raw:
@@ -82,8 +80,6 @@ async def _send_hr_report(bot, session: AsyncSession, session_id: int, user_id: 
             pass
 
     full_text = header + summary + decision_block
-
-    # Telegram: макс. 4096 символов
     if len(full_text) > 4000:
         full_text = full_text[:3990] + "\n …(обрезано) "
 
@@ -102,11 +98,19 @@ async def start_interview(
 ) -> None:
     """Запускает интервью — вызывается из form.py после сохранения анкеты."""
     session_id = await db.create_interview_session(session, message.from_user.id)
-    step = await get_next_step(form_data=form_data, qa_log=[], lang=lang)
+    interview_state = make_empty_state()
 
-    # Если AI вернул "done" или пустой ответ на первом же запросе —
-    # используем резервный вопрос вместо того, чтобы сразу завершать
-    # интервью с нулём вопросов (что давало бесполезный AI-отчёт).
+    step = await get_next_step(
+        form_data=form_data,
+        lang=lang,
+        interview_state=interview_state,
+        last_qa=None,
+        q_count=0,
+    )
+    interview_state = step.get("new_state", interview_state)
+
+    # Если AI вернул done/пустой ответ на первом же шаге —
+    # используем fallback-вопрос вместо того, чтобы сразу завершать
     if step.get("done") or not step.get("question"):
         logger.warning(
             "start_interview: AI вернул done/пусто на первом шаге — "
@@ -127,6 +131,7 @@ async def start_interview(
         interview_qa_log=[],
         interview_current_q=question,
         interview_asked_questions=[question.casefold()],
+        interview_state=interview_state,
     )
 
     intro = (
@@ -146,15 +151,32 @@ async def process_answer(message: Message, state: FSMContext, session: AsyncSess
     qa_log = data.get("interview_qa_log", [])
     current_q = data.get("interview_current_q", "")
     asked_questions = data.get("interview_asked_questions", [])
+    interview_state = data.get("interview_state") or make_empty_state()
 
-    qa_log.append({"q": current_q, "a": (message.text or "").strip()})
+    answer_text = (message.text or "").strip()
+    last_qa = {"q": current_q, "a": answer_text}
+
+    # Запрашиваем следующий вопрос (compact state + last Q&A)
+    step = await get_next_step(
+        form_data=form_data,
+        lang=lang,
+        interview_state=interview_state,
+        last_qa=last_qa,
+        q_count=len(qa_log),
+    )
+
+    # Сохраняем ответ в qa_log (нужен для финального пайплайна агентов)
+    qa_log.append(last_qa)
     await db.append_qa(session, session_id, qa_log)
 
-    step = await get_next_step(form_data=form_data, qa_log=qa_log, lang=lang)
+    interview_state = step.get("new_state", interview_state)
+
     question = (step.get("question") or "").strip()
     if len(qa_log) >= MIN_QUESTIONS and (step.get("done") or not question):
+        await state.update_data(interview_qa_log=qa_log, interview_state=interview_state)
         await _finish_interview(message, state, session, session_id, form_data, lang, qa_log)
         return
+
     if not question:
         question = _fallback_question(lang, qa_log, asked_questions)
     else:
@@ -165,7 +187,12 @@ async def process_answer(message: Message, state: FSMContext, session: AsyncSess
             asked_questions.append(normalized)
 
     await db.update_interview_session(session, session_id, q_count=len(qa_log) + 1)
-    await state.update_data(interview_qa_log=qa_log, interview_current_q=question, interview_asked_questions=asked_questions)
+    await state.update_data(
+        interview_qa_log=qa_log,
+        interview_current_q=question,
+        interview_asked_questions=asked_questions,
+        interview_state=interview_state,
+    )
     await message.answer(f"🤖 {question} ", parse_mode="HTML", reply_markup=_skip_kb(lang))
 
 
@@ -179,14 +206,27 @@ async def skip_question(callback: CallbackQuery, state: FSMContext, session: Asy
     qa_log = data.get("interview_qa_log", [])
     current_q = data.get("interview_current_q", "")
     asked_questions = data.get("interview_asked_questions", [])
+    interview_state = data.get("interview_state") or make_empty_state()
 
     skip_text = "— (пропущен)" if lang == "ru" else "— (o'tkazildi)"
-    qa_log.append({"q": current_q, "a": skip_text})
+    last_qa = {"q": current_q, "a": skip_text}
+
+    step = await get_next_step(
+        form_data=form_data,
+        lang=lang,
+        interview_state=interview_state,
+        last_qa=last_qa,
+        q_count=len(qa_log),
+    )
+
+    qa_log.append(last_qa)
     await db.append_qa(session, session_id, qa_log)
 
-    step = await get_next_step(form_data=form_data, qa_log=qa_log, lang=lang)
+    interview_state = step.get("new_state", interview_state)
+
     question = (step.get("question") or "").strip()
     if len(qa_log) >= MIN_QUESTIONS and (step.get("done") or not question):
+        await state.update_data(interview_qa_log=qa_log, interview_state=interview_state)
         await _finish_interview(callback.message, state, session, session_id, form_data, lang, qa_log)
         return
 
@@ -198,8 +238,14 @@ async def skip_question(callback: CallbackQuery, state: FSMContext, session: Asy
             question = _fallback_question(lang, qa_log, asked_questions)
         else:
             asked_questions.append(normalized)
+
     await db.update_interview_session(session, session_id, q_count=len(qa_log) + 1)
-    await state.update_data(interview_qa_log=qa_log, interview_current_q=question, interview_asked_questions=asked_questions)
+    await state.update_data(
+        interview_qa_log=qa_log,
+        interview_current_q=question,
+        interview_asked_questions=asked_questions,
+        interview_state=interview_state,
+    )
     await callback.message.answer(f"🤖 {question} ", parse_mode="HTML", reply_markup=_skip_kb(lang))
 
 
@@ -221,7 +267,7 @@ async def _finish_interview(
     session_id: int,
     form_data: dict,
     lang: str,
-    qa_log: list[dict] | None = None,
+    qa_log: "list[dict] | None" = None,
 ) -> None:
     """Завершает интервью: запускает пайплайн, сохраняет, отправляет HR."""
     if qa_log is None:
@@ -238,8 +284,8 @@ async def _finish_interview(
 
     user_id = message.from_user.id if message.from_user else message.chat.id
 
-    # Не запускаем дорогой 5-агентный пайплайн если ответов нет совсем —
-    # это случается только при полном отказе AI на старте интервью.
+    # Не запускаем дорогой 5-агентный пайплайн если ответов нет — происходит
+    # только при полном отказе AI на старте.
     if not qa_log:
         logger.warning(
             "_finish_interview: qa_log пуст — пайплайн пропущен (user_id=%d session_id=%d)",
@@ -260,7 +306,6 @@ async def _finish_interview(
             pass
         return
 
-    # Уведомляем HR что идёт обработка
     try:
         app = await db.get_latest_application(session, user_id)
         name = (app or {}).get("name", f"user#{user_id}")
@@ -277,10 +322,8 @@ async def _finish_interview(
         user_id, session_id, len(qa_log),
     )
 
-    # Запускаем пайплайн
     reports = await run_all_agents(form_data, qa_log)
 
-    # Сохраняем в БД
     await db.save_interview_reports(
         session,
         session_id=session_id,
@@ -294,7 +337,6 @@ async def _finish_interview(
         summary=reports.get("summary"),
     )
 
-    # Отправляем отчёт в HR-чат
     await _send_hr_report(message.bot, session, session_id, user_id)
 
 
@@ -319,5 +361,4 @@ def _fallback_question(lang: str, qa_log: list[dict], asked_questions: list[str]
     for question in pool:
         if question.casefold() not in asked_questions:
             return question
-    # Все резервные вопросы уже задавались — берём первый повторно
     return pool[0]
