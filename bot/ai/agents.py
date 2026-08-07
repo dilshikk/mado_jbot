@@ -10,6 +10,11 @@
 
 Итого: 5 запросов вместо 9. Все ответы — строгий JSON.
 Итоговый балл считается в Python (мотивация 30%, опыт 30%, коммуникация 20%, риски 20%).
+
+Примечание по токенам: GPT-5 и GPT-5-mini — reasoning-модели.
+Они тратят токены на внутренние рассуждения (reasoning_tokens) до
+генерации контента. max_completion_tokens = reasoning + content.
+Typical reasoning overhead: 500–1500 токенов на запрос.
 """
 
 from __future__ import annotations
@@ -72,11 +77,10 @@ def _base_context(form_data: dict, qa_log: list[dict]) -> str:
 
     return "\n".join(lines)
 
-
 async def _run_json_agent(
     system_prompt: str,
     user_content: str,
-    max_tokens: int = 500,
+    max_tokens: int = 2000,
     model: str = RESUME_MODEL,
 ) -> dict[str, Any]:
     """Запрашивает агента, всегда возвращает dict (никогда не кидает исключений)."""
@@ -119,7 +123,6 @@ async def _run_json_agent(
         logger.error("_run_json_agent упал: %s", exc, exc_info=True)
         return {"error": "exception", "detail": str(exc)}
 
-
 def _safe_score(raw: object) -> float:
     """Приводит произвольное значение к float в диапазоне [0, 10]."""
     try:
@@ -127,7 +130,6 @@ def _safe_score(raw: object) -> float:
     except (TypeError, ValueError):
         return 0.0
     return max(0.0, min(10.0, value))
-
 
 # ---------------------------------------------------------------------------
 # Основная точка входа
@@ -138,14 +140,16 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
     context = _base_context(form_data, qa_log)
 
     # ── Уровень 2: Resume Extractor ───────────────────────────────────────
+    # max_tokens: ~1500 reasoning + ~1500 content = 3000
     resume_data = await _run_json_agent(
-        RESUME_SYSTEM, context, max_tokens=900, model=RESUME_MODEL,
+        RESUME_SYSTEM, context, max_tokens=3000, model=RESUME_MODEL,
     )
 
     # ── Уровень 3: Communication + Integrity параллельно ─────────────────
+    # max_tokens: ~1500 reasoning + ~1000 content = 2500
     comm_result, integrity_result = await asyncio.gather(
-        _run_json_agent(COMMUNICATION_SYSTEM, context, max_tokens=600, model=COMMUNICATION_MODEL),
-        _run_json_agent(INTEGRITY_SYSTEM, context, max_tokens=700, model=INTEGRITY_MODEL),
+        _run_json_agent(COMMUNICATION_SYSTEM, context, max_tokens=2500, model=COMMUNICATION_MODEL),
+        _run_json_agent(INTEGRITY_SYSTEM, context, max_tokens=2500, model=INTEGRITY_MODEL),
         return_exceptions=True,
     )
 
@@ -168,8 +172,9 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
         + "\n\n=== INTEGRITY AI ===\n"
         + json.dumps(integrity_data, ensure_ascii=False)
     )
+    # max_tokens: ~1500 reasoning + ~1000 content = 2500
     job_match_data = await _run_json_agent(
-        JOB_MATCH_SYSTEM, level3_context, max_tokens=600, model=JOB_MATCH_MODEL,
+        JOB_MATCH_SYSTEM, level3_context, max_tokens=2500, model=JOB_MATCH_MODEL,
     )
 
     # ── Уровень 5: Hiring Decision ────────────────────────────────────────
@@ -178,8 +183,9 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
         + "\n\n=== JOB MATCH AI ===\n"
         + json.dumps(job_match_data, ensure_ascii=False)
     )
+    # max_tokens: ~1500 reasoning + ~1500 content = 3000
     decision_data = await _run_json_agent(
-        HIRING_DECISION_SYSTEM, level4_context, max_tokens=900, model=HIRING_DECISION_MODEL,
+        HIRING_DECISION_SYSTEM, level4_context, max_tokens=3000, model=HIRING_DECISION_MODEL,
     )
 
     # Итоговый балл считается в Python по весам
@@ -204,7 +210,6 @@ async def run_all_agents(form_data: dict, qa_log: list[dict]) -> dict[str, Any]:
         "summary": summary,
     }
 
-
 # ---------------------------------------------------------------------------
 # Форматирование текстового отчёта (Python, без AI)
 # ---------------------------------------------------------------------------
@@ -224,7 +229,6 @@ _RISK_LABELS = {
     "medium": "🟡 Средний",
     "high": "🔴 Высокий",
 }
-
 
 def _build_summary_text(
     resume: dict,
@@ -262,13 +266,13 @@ def _build_summary_text(
     if reasons:
         lines.append("\n Ключевые факты: ")
         for r in reasons[:4]:
-            lines.append(f"  • {r}")
+            lines.append(f" • {r}")
 
     questions = decision.get("questions_for_hr") or []
     if questions:
         lines.append("\n Уточнить на очном интервью: ")
         for q in questions[:3]:
-            lines.append(f"  ❓ {q}")
+            lines.append(f" ❓ {q}")
 
     skills = resume.get("skills") or []
     if isinstance(skills, dict):

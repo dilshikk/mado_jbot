@@ -18,20 +18,23 @@ _RETRYABLE_STATUSES = {408, 429, 500, 502, 503, 504}
 _MAX_ATTEMPTS = 3
 _BACKOFF_BASE = 1.0
 
-
 async def cf_chat(
     model: str,
     messages: list[dict],
-    max_tokens: int = 300,
+    max_tokens: int = 2000,
     response_format: dict | None = None,
 ) -> dict | None:
     """Отправляет chat-запрос в OpenAI API с ретраями.
 
     Возвращает структуру совместимую с ранее используемым Cloudflare API:
-        {"result": {"response": "<text>"}}
+    {"result": {"response": " "}}
     или None при ошибке.
 
     Никогда не бросает исключений.
+
+    Примечание: GPT-5 и GPT-5-mini — reasoning-модели. Они тратят
+    токены на внутренние рассуждения (reasoning_tokens) до генерации
+    ответа. max_completion_tokens должен включать оба типа токенов.
     """
     if not settings.ai_available:
         return None
