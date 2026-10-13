@@ -12,6 +12,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramNetworkError
 
 from bot.ai.client import close_session
+from bot.api.server import start_api
 from bot.core.config import ADMIN_CHAT_ID, settings
 from bot.core.loader import create_bot, create_dispatcher, create_storage
 from bot.db.base import engine, init_db
@@ -65,6 +66,9 @@ async def main() -> None:
     scheduler.add_job(auto_unblock_users, "interval", hours=24, args=[bot])
     scheduler.start()
 
+    # API для веб-платформы (включается переменной PANEL_API_TOKEN)
+    api_runner = await start_api()
+
     # Автоповтор при временных сетевых ошибках
     retry_delay = 5
     while True:
@@ -88,6 +92,9 @@ async def main() -> None:
             retry_delay = 5
 
     # Graceful shutdown
+    if api_runner is not None:
+        with suppress(Exception):
+            await api_runner.cleanup()
     with suppress(Exception):
         scheduler.pause()
     with suppress(Exception):
